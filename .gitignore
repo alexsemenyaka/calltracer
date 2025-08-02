@@ -1,0 +1,26 @@
+# byte code
+__pycache__/
+*.pyc
+
+# macOS junk
+.DS_Store
+
+# Test coverage files
+.coverage
+htmlcov/
+
+# Python package metadata and such
+*.egg-info/
+dist/
+build/
+
+# Too home-grown and raw
+Makefile
+TODO.txt
+
+# evident
+.venv/
+tmp/
+*.log
+requirements.txt.tmp
+requirements.in

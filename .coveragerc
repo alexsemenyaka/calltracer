@@ -1,0 +1,8 @@
+[run]
+source = calltracer
+branch = True
+omit = 
+    tests/*.py
+
+[report]
+show_missing = True
