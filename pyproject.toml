@@ -1,7 +1,7 @@
 [project]
 name = "calltracer"
 version = "0.1.0"
-description = ""
+description = "calltracer: A debugging module with a decorator (CallTracer) for tracing function calls and a function (stack) for logging the current call stack"
 authors = [
     { name = "Alex Semenyaka", email = "alex.semenyaka@gmail.com" },
 ]
@@ -9,8 +9,12 @@ dependencies = []
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
-keywords = []
+keywords = [
+    'debug', 'debugging', 'trace', 'tracer', 'decorator', 
+    'logging', 'stacktrace', 'callstack', 'inspect', 'recursion'
+]
 classifiers = [
+    "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -20,6 +24,9 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: System :: Logging",
+    "Topic :: Software Development :: Tracing",
 ]
 
 #[project.urls]
