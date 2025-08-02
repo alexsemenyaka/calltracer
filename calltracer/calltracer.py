@@ -5,6 +5,7 @@ tracing function calls and a function (stack) for logging the current call stack
 import functools
 import inspect
 import logging
+import contextvars
 
 # Define a logger for the entire module.
 tracer_logger = logging.getLogger(__name__)
@@ -78,6 +79,61 @@ class CallTracer:  # pylint: disable=too-few-public-methods
                 CallTracer._indent_level -= 1
 
         return wrapper
+
+
+# A context variable to safely store the indentation level for each async task
+tracer_indent = contextvars.ContextVar('tracer_indent', default=0)
+
+
+class aCallTracer:  # pylint: disable=too-few-public-methods
+    """
+    A factory for creating decorators that trace ASYNCHRONOUS function/method calls.
+    This version is task-safe thanks to contextvars.
+    """
+    def __init__(self, level=logging.DEBUG, logger=None):
+        """Initializes the tracer factory.
+
+        Args:
+            level (int): The logging level to use for trace messages (e.g., logging.DEBUG).
+            logger (logging.Logger): The logger instance to use.
+        """
+        self.level = level
+        # If no logger is provided, create one for the module
+        self.logger = logger or logging.getLogger(__name__)
+
+    def __call__(self, func):
+        """Wraps an async function to trace its execution, see CallTracer.__call__() above"""
+        if not inspect.iscoroutinefunction(func):
+            raise TypeError("aCallTracer can only be used to decorate async functions.")
+
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            # Get the current indentation level from the context variable
+            indent_val = tracer_indent.get()
+            indent_str = '    ' * indent_val
+            
+            func_name = func.__qualname__
+            arg_str = ", ".join(
+                [repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()]
+            )
+            
+            self.logger.log(self.level, "%s--> Calling %s(%s)", indent_str, func_name, arg_str)
+            
+            # Set the new, deeper indentation level for the context of this call
+            token = tracer_indent.set(indent_val + 1)
+            
+            try:
+                result = await func(*args, **kwargs)
+                self.logger.log(self.level, "%s<-- Exiting %s, returned: %s", indent_str, func_name, repr(result))
+                return result
+            except Exception as e:
+                self.logger.warning("%s<!> Exiting %s with exception: %s", indent_str, func_name, repr(e))
+                raise
+            finally:
+                # Restore the indentation level for the outer context
+                tracer_indent.reset(token)
+
+        return async_wrapper
 
 
 def stack(level=logging.DEBUG, logger=tracer_logger, limit=None, start=0):

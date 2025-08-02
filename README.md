@@ -1,4 +1,4 @@
-# calltracer
+# pytracecall
 [![PyPI version](https://img.shields.io/pypi/v/pytracecall.svg)](https://pypi.org/project/pytracecall/)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pytracecall.svg)](https://pypi.org/project/pytracecall/)
 [![PyPI - License](https://img.shields.io/pypi/l/pytracecall.svg)](https://pypi.org/project/pytracecall/)
@@ -7,7 +7,7 @@
 
 # Python Call Tracer Module
 
-A debugging module with a decorator (`CallTracer`) for tracing function calls and a function (`stack`) for logging the call stack.
+A debugging module with decorators (`CallTracer`, `aCallTracer`) and a function (`stack`) for tracing function calls and logging the call stack.
 
 This module provides simple yet powerful tools to help you understand your code's execution flow without the need for a full step-by-step debugger. It is designed to integrate seamlessly with Python's standard `logging` module.
 
@@ -15,11 +15,12 @@ This module provides simple yet powerful tools to help you understand your code'
 
 ## Features
 
--   **Function Call Tracing**: Use the `@trace` decorator to automatically log when a function is entered and exited.
--   **Data Flow Visibility**: Logs function arguments and return values to see how data flows through your application.
--   **Recursion Visualization**: Automatically indents log messages to clearly show recursion depth.
+-   **Synchronous and Asynchronous Tracing**: Decorators for both standard (`def`) and asynchronous (`async def`) functions.
+-   **Concurrency Safe**: The async tracer (`aCallTracer`) uses `contextvars` to safely trace concurrent tasks without mixing up logs.
+-   **Data Flow Visibility**: Logs function arguments and return values.
+-   **Recursion Visualization**: Automatically indents log messages to clearly show recursion depth, even in concurrent contexts.
 -   **Stack Inspection**: Use the `stack()` function to log the current call stack at any point in your code.
--   **Logging Integration**: Works with the standard `logging` module, allowing for flexible configuration of output and levels.
+-   **Logging Integration**: Works with the standard `logging` module.
 
 ***
 
@@ -28,18 +29,18 @@ This module provides simple yet powerful tools to help you understand your code'
 You can install the package from the Python Package Index (PyPI) using **`pip`**.
 
 ```bash
-pip install calltracer
+pip install pytracecall
 ```
 
 To ensure you have the latest version, you can use the `--upgrade` flag:
 
 ```bash
-pip install --upgrade calltracer
+pip install --upgrade pytracecall
 ```
 
 ***
 
-## Usage
+## Synchronous Usage
 
 First, ensure you configure Python's `logging` module to see the output.
 
@@ -58,7 +59,7 @@ logging.basicConfig(
 
 ### Basic Tracing
 
-Use the `CallTracer` instance as a decorator to trace a function.
+Use the `CallTracer` instance as a decorator to trace a synchronous function.
 
 ```python
 from calltracer import CallTracer
@@ -81,98 +82,101 @@ add(10, 5)
 
 ***
 
+## Asynchronous Usage
+
+The `aCallTracer` decorator is designed specifically for `async def` functions and is safe for concurrent execution.
+
+### Async Example
+
+```python
+import asyncio
+import logging
+from calltracer import aCallTracer, stack
+
+# Basic logging configuration (can be done once)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%H:%M:%S",
+)
+
+# Create an instance of the ASYNCHRONOUS tracer
+async_trace = aCallTracer(level=logging.DEBUG)
+
+class AsyncDataFetcher:
+    @async_trace
+    async def process_item(self, item_id: str, delay: float):
+        await asyncio.sleep(delay)
+        return f"Processed {item_id}"
+
+async def main():
+    fetcher = AsyncDataFetcher()
+    print("\n--- Running two tasks concurrently to show task-safety ---")
+    results = await asyncio.gather(
+        fetcher.process_item(item_id="A", delay=0.2),
+        fetcher.process_item(item_id="B", delay=0.1),
+    )
+    logging.info("Concurrent results: %s", results)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Example Output (Async)
+
+Note how the logs from Task A and B are interleaved, but the indentation remains correct for each independent task.
+
+```
+--- Running two tasks concurrently to show task-safety ---
+22:01:05 - calltracer.async_tracer - DEBUG - --> Calling AsyncDataFetcher.process_item(<...>, item_id='A', delay=0.2)
+22:01:05 - calltracer.async_tracer - DEBUG - --> Calling AsyncDataFetcher.process_item(<...>, item_id='B', delay=0.1)
+22:01:05 - calltracer.async_tracer - DEBUG - <-- Exiting AsyncDataFetcher.process_item, returned: 'Processed B'
+22:01:05 - calltracer.async_tracer - DEBUG - <-- Exiting AsyncDataFetcher.process_item, returned: 'Processed A'
+22:01:05 - root - INFO - Concurrent results: ['Processed A', 'Processed B']
+```
+
+***
+
 ## API Reference
 
-### `CallTracer` Class
+### `CallTracer` Class (Synchronous)
 
-A factory for creating decorators that trace function/method calls. This class, when instantiated, creates a decorator that can be applied to any function or method to log its entry, exit, arguments, and return value.
+A factory for creating decorators that trace synchronous (`def`) function/method calls.
 
 #### Initialization
 
 ```python
 from calltracer import CallTracer
-import logging
-
-# Create a tracer that logs at the INFO level
-trace_info = CallTracer(level=logging.INFO)
+trace = CallTracer(level=logging.INFO)
 ```
 
--   **`level`** (`int`, optional): The logging level to use for trace messages. Defaults to `logging.DEBUG`.
+### `aCallTracer` Class (Asynchronous)
+
+A factory for creating decorators that trace asynchronous (`async def`) function/method calls. This tracer is task-safe for concurrent code using `contextvars`.
+
+#### Initialization
+
+```python
+from calltracer import aCallTracer
+async_trace = aCallTracer(level=logging.INFO)
+```
+
+**Parameters for both classes:**
+
+-   **`level`** (`int`, optional): The logging level for trace messages. Defaults to `logging.DEBUG`.
 -   **`logger`** (`logging.Logger`, optional): The logger instance to use. Defaults to the internal module logger.
 
 ### `stack()` Function
 
-Logs the current call stack to the specified logger. This function creates a "snapshot" of how the code reached a certain point, which is useful for point-in-time debugging.
+Logs the current call stack to the specified logger. This function works in both synchronous and asynchronous code.
 
 #### Signature
 
 ```python
-stack(level=logging.DEBUG, logger=tracer_logger, limit=None, start=0)
+stack(level=logging.DEBUG, logger=None, limit=None, start=0)
 ```
 
 -   **`level`** (`int`, optional): The logging level for the message. Defaults to `logging.DEBUG`.
 -   **`logger`** (`logging.Logger`, optional): The logger instance to use. Defaults to the internal module logger.
 -   **`limit`** (`int`, optional): The maximum number of frames to display. Defaults to `None` (all frames).
 -   **`start`** (`int`, optional): The offset of the first frame to display. Defaults to `0`.
-
-***
-
-## Advanced Example
-
-This example demonstrates using both the `@trace` decorator and the `stack()` function to debug a recursive function.
-
-```python
-import logging
-from calltracer import CallTracer, stack
-
-# Basic logging configuration
-logging.basicConfig(level=logging.DEBUG, format='%(levelname)s - %(message)s')
-
-# Create a tracer instance
-trace = CallTracer()
-
-class AdvancedCalculator:
-    @trace
-    def factorial(self, n):
-        """Calculates factorial and demonstrates stack tracing."""
-        # Use stack() for point-in-time analysis when n hits 2
-        if n == 2:
-            logging.info("--- Dumping stack, because n == 2 ---")
-            # Call stack() with INFO level to make it stand out
-            stack(level=logging.INFO)
-
-        if n < 0:
-            raise ValueError("Factorial is not defined for negative numbers")
-        if n == 0:
-            return 1
-        else:
-            return n * self.factorial(n - 1)
-
-# Run the code
-calc = AdvancedCalculator()
-logging.info("--- Starting recursive call with stack dump ---")
-calc.factorial(4)
-```
-
-### Example Output
-
-The output clearly shows the trace of `factorial` calls, interrupted by the stack dump when `n` is `2`.
-
-```
-INFO - --- Starting recursive call with stack dump ---
-DEBUG - --> Calling AdvancedCalculator.factorial(<__main__.AdvancedCalculator object at ...>, 4)
-DEBUG -     --> Calling AdvancedCalculator.factorial(<__main__.AdvancedCalculator object at ...>, 3)
-DEBUG -         --> Calling AdvancedCalculator.factorial(<__main__.AdvancedCalculator object at ...>, 2)
-INFO - --- Dumping stack, because n == 2 ---
-INFO - Stack trace at /path/to/main.py:18 in factorial():
-INFO -   ↳ Called from: /path/to/main.py:25, in factorial
-INFO -   ↳ Called from: /path/to/main.py:25, in factorial
-INFO -   ↳ Called from: /path/to/main.py:31, in <module>
-DEBUG -             --> Calling AdvancedCalculator.factorial(<__main__.AdvancedCalculator object at ...>, 1)
-DEBUG -                 --> Calling AdvancedCalculator.factorial(<__main__.AdvancedCalculator object at ...>, 0)
-DEBUG -                 <-- Exiting AdvancedCalculator.factorial, returned: 1
-DEBUG -             <-- Exiting AdvancedCalculator.factorial, returned: 1
-DEBUG -         <-- Exiting AdvancedCalculator.factorial, returned: 2
-DEBUG -     <-- Exiting AdvancedCalculator.factorial, returned: 6
-DEBUG - <-- Exiting AdvancedCalculator.factorial, returned: 24
-```
