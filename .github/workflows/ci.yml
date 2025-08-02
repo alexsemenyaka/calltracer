@@ -14,10 +14,10 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Set up Python ${ matrix.python-version }
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
-        python-version: ${ matrix.python-version }
+        python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
       run: |
@@ -32,7 +32,7 @@ jobs:
     - name: Upload coverage to Coveralls
       uses: coverallsapp/github-action@v2
       with:
-        github-token: ${ secrets.GITHUB_TOKEN }
+        github-token: ${{ secrets.GITHUB_TOKEN }}
         parallel: true
 
   # This job will run only after all jobs in the 'test' matrix have completed successfully
@@ -43,5 +43,5 @@ jobs:
     - name: Coveralls Finished
       uses: coverallsapp/github-action@v2
       with:
-        github-token: ${ secrets.GITHUB_TOKEN }
+        github-token: ${{ secrets.GITHUB_TOKEN }}
         parallel-finished: true
