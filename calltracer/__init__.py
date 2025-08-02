@@ -7,7 +7,7 @@ import importlib.metadata
 
 from .calltracer import CallTracer, stack
 
-_metadata = importlib.metadata.metadata("calltracer")
+_metadata = importlib.metadata.metadata("pytracecall")
 __version__ = _metadata["Version"]
 __author__ = _metadata["Author-email"]
 __license__ = _metadata["License"]
