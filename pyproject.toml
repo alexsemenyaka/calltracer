@@ -1,6 +1,6 @@
 [project]
 name = "calltracer"
-version = "1.0.0"
+version = "1.0.1"
 description = "calltracer: A debugging module with a decorator (CallTracer) for tracing function calls and a function (stack) for logging the current call stack"
 authors = [
     { name = "Alex Semenyaka", email = "alex.semenyaka@gmail.com" },
