@@ -2,17 +2,23 @@
 calltracer: A debugging module with a decorator (CallTracer) for
 tracing function calls and a function (stack) for logging the current call stack.
 """
+import asyncio
 import functools
 import inspect
 import logging
 import contextvars
 
+
 # Define a logger for the entire module.
 tracer_logger = logging.getLogger(__name__)
 
+# A single context variable will hold the list of calls (the chain).
+# It works safely for both sync and async code.
+tracer_chain = contextvars.ContextVar('tracer_chain', default=[])
+
 
 class CallTracer:  # pylint: disable=too-few-public-methods
-    """A factory for creating decorators that trace function/method calls.
+    """A factory for creating decorators that trace SYNCHRONOUS function/method calls.
 
     This class, when instantiated, creates a decorator that can be applied to any
     function or method to log its entry, exit, arguments, and return value.
@@ -25,17 +31,18 @@ class CallTracer:  # pylint: disable=too-few-public-methods
             return x + y
     """
 
-    _indent_level = 0
-
-    def __init__(self, level=logging.DEBUG, logger=tracer_logger):
-        """Initializes the tracer factory.
-
+    def __init__(self, level=logging.DEBUG, trace_chain=False, logger=None):
+        """
+        Initializes the factory.
+        
         Args:
-            level (int): The logging level to use for trace messages (e.g., logging.DEBUG).
+            level (int): The logging level for trace messages.
+            trace_chain (bool): If True, accumulates and logs the call chain.
             logger (logging.Logger): The logger instance to use.
         """
         self.level = level
-        self.logger = logger
+        self.trace_chain = trace_chain
+        self.logger = logger or logging.getLogger(__name__)
 
     def __call__(self, func):
         """Makes the instance callable and returns the actual decorator wrapper.
@@ -46,93 +53,123 @@ class CallTracer:  # pylint: disable=too-few-public-methods
         Returns:
             Callable: The wrapped function that includes tracing logic.
         """
+        if inspect.iscoroutinefunction(func):
+            raise TypeError("Use aCallTracer for async functions")
 
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            indent = "    " * CallTracer._indent_level
+        def sync_wrapper(*args, **kwargs):
+            chain = tracer_chain.get()
+            indent = '    ' * len(chain)
+            
             func_name = func.__qualname__
             arg_str = ", ".join(
                 [repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()]
             )
+            current_call_sig = f"{func_name}({arg_str})"
 
-            self.logger.log(
-                self.level, "%s--> Calling %s(%s)", indent, func_name, arg_str
-            )
+            # Build the entry log message
+            log_entry = f"{indent}--> Calling {current_call_sig}"
+            if self.trace_chain and chain:
+                chain_str = " <== ".join(reversed(chain))
+                log_entry += f"  <== {chain_str}"
+            self.logger.log(self.level, log_entry)
 
-            CallTracer._indent_level += 1
+            # Update the context for the next level down
+            token = tracer_chain.set(chain + [current_call_sig])
+
             try:
                 result = func(*args, **kwargs)
-                self.logger.log(
-                    self.level,
-                    "%s<-- Exiting %s, returned: %s",
-                    indent,
-                    func_name,
-                    repr(result),
-                )
+                
+                # Build the exit log message
+                log_exit = f"{indent}<-- Exiting {current_call_sig}, returned: {repr(result)}"
+                if self.trace_chain and chain:
+                    pending_str = " <== ".join(reversed(chain))
+                    log_exit += f"  (pending: {pending_str})"
+                self.logger.log(self.level, log_exit)
+                
                 return result
             except Exception as e:
-                self.logger.warning(
-                    "%s<!> Exiting %s with exception: %s", indent, func_name, repr(e)
-                )
+                # Build the exception log message
+                log_exc = f"{indent}<!> Exiting {current_call_sig} with exception: {repr(e)}"
+                if self.trace_chain and chain:
+                    pending_str = " <== ".join(reversed(chain))
+                    log_exc += f"  (pending: {pending_str})"
+                self.logger.warning(log_exc)
                 raise
             finally:
-                CallTracer._indent_level -= 1
-
-        return wrapper
-
-
-# A context variable to safely store the indentation level for each async task
-tracer_indent = contextvars.ContextVar('tracer_indent', default=0)
-
+                # Restore the context for the upper level
+                tracer_chain.reset(token)
+        return sync_wrapper
 
 class aCallTracer:  # pylint: disable=too-few-public-methods
-    """
-    A factory for creating decorators that trace ASYNCHRONOUS function/method calls.
-    This version is task-safe thanks to contextvars.
-    """
-    def __init__(self, level=logging.DEBUG, logger=None):
-        """Initializes the tracer factory.
-
+    """A factory for creating decorators that trace ASYNCHRONOUS function calls."""
+    
+    def __init__(self, level=logging.DEBUG, trace_chain=False, logger=None):
+        """
+        Initializes the factory.
+        
         Args:
-            level (int): The logging level to use for trace messages (e.g., logging.DEBUG).
+            level (int): The logging level for trace messages.
+            trace_chain (bool): If True, accumulates and logs the call chain.
             logger (logging.Logger): The logger instance to use.
         """
         self.level = level
-        # If no logger is provided, create one for the module
+        self.trace_chain = trace_chain
         self.logger = logger or logging.getLogger(__name__)
 
     def __call__(self, func):
-        """Wraps an async function to trace its execution, see CallTracer.__call__() above"""
+        """Makes the instance callable and returns the actual decorator wrapper.
+
+        Args:
+            func (Callable): The function to be decorated.
+
+        Returns:
+            Callable: The wrapped function that includes tracing logic.
+        """
         if not inspect.iscoroutinefunction(func):
-            raise TypeError("aCallTracer can only be used to decorate async functions.")
+            raise TypeError("Use CallTracer for sync functions.")
 
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
-            # Get the current indentation level from the context variable
-            indent_val = tracer_indent.get()
-            indent_str = '    ' * indent_val
-            
+            chain = tracer_chain.get()
+            indent = '    ' * len(chain)
+
             func_name = func.__qualname__
             arg_str = ", ".join(
                 [repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()]
             )
-            
-            self.logger.log(self.level, "%s--> Calling %s(%s)", indent_str, func_name, arg_str)
-            
-            # Set the new, deeper indentation level for the context of this call
-            token = tracer_indent.set(indent_val + 1)
-            
+            current_call_sig = f"{func_name}({arg_str})"
+
+            # Build the entry log message
+            log_entry = f"{indent}--> Calling {current_call_sig}"
+            if self.trace_chain and chain:
+                chain_str = " <== ".join(reversed(chain))
+                log_entry += f"  <== {chain_str}"
+            self.logger.log(self.level, log_entry)
+
+            token = tracer_chain.set(chain + [current_call_sig])
+
             try:
                 result = await func(*args, **kwargs)
-                self.logger.log(self.level, "%s<-- Exiting %s, returned: %s", indent_str, func_name, repr(result))
+                
+                # Build the exit log message
+                log_exit = f"{indent}<-- Exiting {current_call_sig}, returned: {repr(result)}"
+                if self.trace_chain and chain:
+                    pending_str = " <== ".join(reversed(chain))
+                    log_exit += f"  (pending: {pending_str})"
+                self.logger.log(self.level, log_exit)
+                
                 return result
             except Exception as e:
-                self.logger.warning("%s<!> Exiting %s with exception: %s", indent_str, func_name, repr(e))
+                # Build the exception log message
+                log_exc = f"{indent}<!> Exiting {current_call_sig} with exception: {repr(e)}"
+                if self.trace_chain and chain:
+                    pending_str = " <== ".join(reversed(chain))
+                    log_exc += f"  (pending: {pending_str})"
+                self.logger.warning(log_exc)
                 raise
             finally:
-                # Restore the indentation level for the outer context
-                tracer_indent.reset(token)
-
+                tracer_chain.reset(token)
         return async_wrapper
 
 

@@ -11,23 +11,22 @@ from calltracer import aCallTracer
 # The synchronous stack() function can still be used
 from calltracer import stack
 
-# 1. Configure the logging system (same as before)
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%H:%M:%S",
 )
 
-# 2. Create an instance of the ASYNCHRONOUS tracer
-async_trace = aCallTracer(level=logging.DEBUG)
+async_trace   = aCallTracer(level=logging.DEBUG)
+async_chtrace = aCallTracer(level=logging.DEBUG, trace_chain=True)
 
 
 class AsyncDataFetcher:
-    """An async class to demonstrate tracing concurrent operations."""
+    """An async class to demonstrate tracing concurrent operations"""
 
     def __init__(self, name):
         self.name = name
-        logging.info("Fetcher '%s' initialized.", self.name)
+        logging.info("Fetcher '%s' initialized", self.name)
 
     @async_trace
     async def process_item(self, item_id: str, delay: float) -> str:
@@ -52,6 +51,37 @@ class AsyncDataFetcher:
     async def process_item_upper(self, item_id: str, delay: float) -> str:
         return await self.process_item_medium(item_id, delay)
 
+class AsyncSecondDataFetcher:
+    """An async class to demonstrate tracing concurrent operations with chaining"""
+
+    def __init__(self, name):
+        self.name = name
+        logging.info("Fetcher '%s' initialized", self.name)
+
+    @async_chtrace
+    async def process_item(self, item_id: str, delay: float) -> str:
+        """
+        A sample async task that simulates I/O operation and gets traced
+        """
+        logging.info("-> Starting to process item '%s'", item_id)
+        await asyncio.sleep(delay)
+        
+        # You can still use the synchronous stack() function inside async code
+        if item_id == 'B':
+            stack(level=logging.INFO)
+
+        logging.info("<- Finished processing item '%s'", item_id)
+        return f"Processed {item_id}"
+
+    @async_chtrace
+    async def process_item_medium(self, item_id: str, delay: float) -> str:
+        return await self.process_item(item_id, delay)
+
+    @async_chtrace
+    async def process_item_upper(self, item_id: str, delay: float) -> str:
+        return await self.process_item_medium(item_id, delay)
+
+
 
 async def main():
     """Main function to set up and run the async example."""
@@ -65,8 +95,20 @@ async def main():
         fetcher.process_item_upper(item_id="A", delay=0.2),
         fetcher.process_item_upper(item_id="B", delay=0.1),
     )
-    
+
     logging.info("Concurrent results: %s", results)
+
+    # Now with chaining
+    fetcher = AsyncSecondDataFetcher("ConcurrentFetcher2")
+
+    print("\n--- Running two tasks concurrently to demonstrate task-safety one more time ---")
+    
+    results = await asyncio.gather(
+        fetcher.process_item_upper(item_id="A", delay=0.2),
+        fetcher.process_item_upper(item_id="B", delay=0.1),
+    )
+
+    logging.info("Concurrent second results: %s", results)
 
 
 if __name__ == "__main__":
