@@ -164,6 +164,7 @@ async_trace = aCallTracer(level=logging.INFO)
 **Parameters for both classes:**
 
 -   **`level`** (`int`, optional): The logging level for trace messages. Defaults to `logging.DEBUG`.
+-   **`trace_chain`** (`bool`, optional): If True, accumulates and logs the call chain. Default to False.
 -   **`logger`** (`logging.Logger`, optional): The logger instance to use. Defaults to the internal module logger.
 
 ### `stack()` Function
