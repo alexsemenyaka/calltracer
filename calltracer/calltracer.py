@@ -3,14 +3,17 @@ calltracer: A debugging module with a decorator (CallTracer) for
 tracing function calls and a function (stack) for logging the current call stack.
 """
 import time
+import math
+import json
 import asyncio
 import functools
 import inspect
 import logging
 import contextvars
 from enum import Enum, auto
-import math
 from collections import defaultdict
+from datetime import datetime, timezone
+from typing import Optional, Callable
 
 # Define a logger for the entire module.
 tracer_logger = logging.getLogger(__name__)
@@ -18,6 +21,9 @@ tracer_logger = logging.getLogger(__name__)
 # A single context variable will hold the list of calls (the chain).
 # It works safely for both sync and async code.
 tracer_chain = contextvars.ContextVar('tracer_chain', default=[])
+
+# A context var to control whether tracing is enabled for the current call stack.
+tracing_enabled_context = contextvars.ContextVar('tracing_enabled', default=True)
 
 # Accum for the daughter functions exec time
 sub_duration_aggregator = contextvars.ContextVar(
@@ -176,6 +182,38 @@ def _get_arg_str(func, args, kwargs, tracer_instance):
 
     return arg_str
 
+def _log_trace_event(tracer, event_type: str, data: dict):
+    """Builds a data record and logs it as either text or JSON."""
+    
+    base_record = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "event": event_type,
+        **data
+    }
+
+    if tracer.output == 'json':
+        log_string = json.dumps(base_record)
+    else: # 'text' format
+        timing_block = data.get("timing_block", "")
+        indent = data.get("indent", "")
+        current_call_sig = data.get("current_call_sig", "")
+        
+        if event_type == 'enter':
+            log_string = f"{indent}--> Calling {current_call_sig}"
+            if tracer.trace_chain and data.get("chain"):
+                chain_str = " <== ".join(reversed(data["chain"]))
+                log_string += f"  <== {chain_str}"
+        
+        elif event_type == 'exit':
+            display_result = tracer.return_transform(data["result"]) if tracer.return_transform else data["result"]
+            log_string = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(display_result)}"
+        
+        elif event_type == 'exception':
+            log_string = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(data['exception'])}"
+    
+    level = logging.WARNING if event_type == 'exception' else tracer.level
+    tracer.logger.log(level, log_string)
+
 
 ### OUR CLASSES
 
@@ -183,7 +221,9 @@ class _BaseTracer:
     """A common base class to hold shared initialization logic."""
     def __init__(self, level=logging.DEBUG, trace_chain=False, logger=None,
                  transform=None, max_argval_len=None,
-                 timing: str = None, timing_fmt: DFMT = DFMT.SINGLE):
+                 return_transform: Optional[Callable] = None, max_return_len=None,
+                 condition: Optional[Callable] = None, timing: str = None, timing_fmt: DFMT = DFMT.SINGLE,
+                 output: str = 'text'):
         """
         Initializes the factory.
 
@@ -203,6 +243,12 @@ class _BaseTracer:
                 - If None (default), no truncation is performed.
                 - If 0, argument values are hidden (displayed as '...').
                 - If > 0, the string representation is truncated to this length.
+            condition (Callable, optional): A function that determines if tracing
+                should be active for a call. It receives the function's
+                qualified name and its arguments (`(func_name, *args, **kwargs)`)
+                and must return True or False. If it returns False, this
+                call and all nested decorated calls will not be traced.
+                Defaults to None (always trace).
             timing (str, optional): Enables "poor man's profiling". A string of
                 characters specifying which clocks to use. The order of
                 characters in the string is preserved in the output.
@@ -234,16 +280,21 @@ class _BaseTracer:
                 - HUMAN: A compound, human-readable format for larger
                   durations (e.g., "5 min, 23.4 s"). For small values
                   (<100ms), it behaves like SINGLE.
+            output (str, optional): The output format for trace records.
+                Can be 'text' (default) or 'json'.
         """
-        self.level = level
-        self.trace_chain = trace_chain
-        self.logger = logger or logging.getLogger(__name__)
-        self.transform = transform or {}
-        self.max_argval_len = max_argval_len
+        self.level            = level
+        self.trace_chain      = trace_chain
+        self.logger           = logger or logging.getLogger(__name__)
+        self.transform        = transform or {}
+        self.return_transform = return_transform
+        self.max_argval_len   = max_argval_len
+        self.condition        = condition
+        self.output           = output
 
-        self.timing = timing
-        self.timing_fmt = timing_fmt
-        self.timing_funcs = []
+        self.timing_funcs     = []
+        self.timing           = timing
+        self.timing_fmt       = timing_fmt
         if self.timing:
             for char in self.timing.lower():
                 if char in _TIMERS:
@@ -277,6 +328,26 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
 
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
+
+            # check if reporting was turned off upper on the call stack
+            if not tracing_enabled_context.get():
+                return func(*args, **kwargs)
+
+            # check if we are allowed to report
+            should_run_tracer = True
+            if self.condition:
+                should_run_tracer = self.condition(func.__qualname__, *args, **kwargs)
+            # and inform future calls down on the call stack
+            token_enabled = tracing_enabled_context.set(should_run_tracer)
+
+            # now, if the tracing is not allowed, just call the function...
+            if not should_run_tracer:
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    # ...and restore the context
+                    tracing_enabled_context.reset(token_enabled)
+
             chain = tracer_chain.get()
             indent = '    ' * len(chain)
 
@@ -327,7 +398,8 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                 # Get result/exception from locals() as the finally block runs after return/raise
                 exc = locals().get('e')
                 if exc is None:
-                    log_msg = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(locals()['result'])}"
+                    display_result = self.return_transform(result) if self.return_transform else result
+                    log_msg = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(display_result)}"
                     self.logger.log(self.level, log_msg)
                 else:
                     log_msg = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(exc)}"
@@ -335,6 +407,7 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
 
                 # Restore the context for the upper level
                 tracer_chain.reset(token)
+                tracing_enabled_context.reset(token_enabled)
         return sync_wrapper
 
 class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
@@ -354,6 +427,25 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
 
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
+            # check if reporting was turned off upper on the call stack
+            if not tracing_enabled_context.get():
+                return await func(*args, **kwargs)
+
+            # check if we are allowed to report
+            should_run_tracer = True
+            if self.condition:
+                should_run_tracer = self.condition(func.__qualname__, *args, **kwargs)
+            # and inform future calls down on the call stack
+            token_enabled = tracing_enabled_context.set(should_run_tracer)
+
+            # now, if the tracing is not allowed, just call the function...
+            if not should_run_tracer:
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    # ...and restore the context
+                    tracing_enabled_context.reset(token_enabled)
+
             chain = tracer_chain.get()
             indent = '    ' * len(chain)
 
@@ -399,12 +491,14 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
 
                 exc = locals().get('e')
                 if exc is None:
-                    log_msg = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(locals()['result'])}"
+                    display_result = self.return_transform(result) if self.return_transform else result
+                    log_msg = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(display_result)}"
                     self.logger.log(self.level, log_msg)
                 else:
                     log_msg = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(exc)}"
                     self.logger.warning(log_msg)
 
+                tracing_enabled_context.reset(token_enabled)
                 tracer_chain.reset(token)
         return async_wrapper
 
