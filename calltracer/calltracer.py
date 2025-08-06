@@ -10,6 +10,7 @@ import logging
 import contextvars
 from enum import Enum, auto
 import math
+from collections import defaultdict
 
 # Define a logger for the entire module.
 tracer_logger = logging.getLogger(__name__)
@@ -17,6 +18,12 @@ tracer_logger = logging.getLogger(__name__)
 # A single context variable will hold the list of calls (the chain).
 # It works safely for both sync and async code.
 tracer_chain = contextvars.ContextVar('tracer_chain', default=[])
+
+# Accum for the daughter functions exec time
+sub_duration_aggregator = contextvars.ContextVar(
+    'sub_duration_aggregator', 
+    default=defaultdict(int)
+)
 
 
 ### USEFUL CONSTANTS
@@ -102,22 +109,31 @@ def _readable_duration(duration: int, fmt: DFMT) -> str:
     # Fallback for any unknown format
     raise ValueError(f"Unknown duration format: {fmt}")
 
-def _get_timing_block(start_times: list, end_times: list, timing_str: str, fmt: DFMT) -> str:
+def _get_timing_block(inclusive_durs: dict, exclusive_durs: dict, timing_str: str, fmt: DFMT) -> str:
     """
-    Generates a formatted block of execution times based on start/end timestamps.
-    Preserves the order from the original timing_str.
+    Generates a formatted block of execution times, choosing between
+    inclusive and exclusive times based on the case of the timing character.
     """
-    if not start_times:
+    if not timing_str:
         return ""
-    
-    labels = timing_str
-    
-    parts = [
-        f"{label}: {_readable_duration(end - start, fmt)}"
-        for label, start, end in zip(labels, start_times, end_times)
-    ]
-    unpadded_block = f"[{' | '.join(parts)}]"
+ 
+    parts = []
+    for char in timing_str:
+        lower_char = char.lower()
+        if lower_char in inclusive_durs:
+            if char.isupper():
+                duration = exclusive_durs[lower_char]
+            else:
+                duration = inclusive_durs[lower_char]
+ 
+            readable_dur = _readable_duration(duration, fmt)
+            # В лейбле используем оригинальный символ (T или t)
+            parts.append(f"{char}: {readable_dur}")
 
+    if not parts:
+        return ""
+
+    unpadded_block = f"[{' | '.join(parts)}]"
     return f"{unpadded_block:<{_TIMING_BLOCK_WIDTH}}"
 
 def _get_arg_str(func, args, kwargs, tracer_instance):
@@ -166,7 +182,7 @@ def _get_arg_str(func, args, kwargs, tracer_instance):
 class _BaseTracer:
     """A common base class to hold shared initialization logic."""
     def __init__(self, level=logging.DEBUG, trace_chain=False, logger=None,
-                 transform=None, max_argval_len=None, duration_fmt: DFMT = None,
+                 transform=None, max_argval_len=None,
                  timing: str = None, timing_fmt: DFMT = DFMT.SINGLE):
         """
         Initializes the factory.
@@ -187,14 +203,37 @@ class _BaseTracer:
                 - If None (default), no truncation is performed.
                 - If 0, argument values are hidden (displayed as '...').
                 - If > 0, the string representation is truncated to this length.
-            duration_fmt (DFMT, optional): Enables and sets the format for
-                logging the total execution time. Defaults to None (disabled).
-            timing (str, optional): Enables "poor man's profiling". A case-insensitive
-                string of characters specifying which clocks to use.
-                'm': monotonic, 'h': perf_counter, 'c': process_time, 't': thread_time.
+            timing (str, optional): Enables "poor man's profiling". A string of
+                characters specifying which clocks to use. The order of
+                characters in the string is preserved in the output.
+
+                Clock selection characters:
+                'm': time.monotonic_ns
+                'h': time.perf_counter_ns
+                'c': time.process_time_ns
+                't': time.thread_time_ns
+
+                The case of each character determines the type of measurement:
+                - **Lowercase** (m, h, c, t): Measures **inclusive** time
+                  (the total time from the start to the end of the
+                  function call).
+                - **Uppercase** (M, H, C, T): Measures **exclusive** time
+                  (the inclusive time minus the time spent in any directly
+                  called child functions that are also decorated).
+                Example: `timing="Mh"` will show exclusive monotonic time
+                and inclusive perf_counter time.
                 Defaults to None (disabled).
             timing_fmt (DFMT, optional): The format for displaying timing values.
-                Defaults to DFMT.SINGLE.
+                Defaults to DFMT.SINGLE. Possible values from the DFMT enum:
+                - NANO: Plain nanoseconds (e.g., "123 ns").
+                - MICRO: Plain microseconds (e.g., "0.123 µs").
+                - SEC: Plain seconds (e.g., "0.000000123 s").
+                - SINGLE: A "smart" format that uses the single most
+                  appropriate unit (ns, µs, s, min, or hr) depending
+                  on the magnitude.
+                - HUMAN: A compound, human-readable format for larger
+                  durations (e.g., "5 min, 23.4 s"). For small values
+                  (<100ms), it behaves like SINGLE.
         """
         self.level = level
         self.trace_chain = trace_chain
@@ -255,36 +294,45 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
             token = tracer_chain.set(chain + [current_call_sig])
 
             # Start time measurements
-            start_times = [f() for f in self.timing_funcs]
+            parent_aggregator = sub_duration_aggregator.get()
+            token_agg = sub_duration_aggregator.set(defaultdict(int))
+
+            start_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
 
             try:
                 result = func(*args, **kwargs)
-
-                # Stop time measurements
-                end_times = [f() for f in self.timing_funcs]
-                timing_block = _get_timing_block(start_times, end_times, self.timing, self.timing_fmt)
- 
-                # Build the exit log message
-                log_exit = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(result)}"
-                if self.trace_chain and chain:
-                    pending_str = " <== ".join(reversed(chain))
-                    log_exit += f"  (pending: {pending_str})"
-                self.logger.log(self.level, log_exit)
-                
                 return result
-            except Exception as e:
-                # Stop time measurements
-                end_times = [f() for f in self.timing_funcs]
-                timing_block = _get_timing_block(start_times, end_times, self.timing, self.timing_fmt)
 
-                # Build the exception log message
-                log_exc = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(e)}"
-                if self.trace_chain and chain:
-                    pending_str = " <== ".join(reversed(chain))
-                    log_exc += f"  (pending: {pending_str})"
-                self.logger.warning(log_exc)
+            except Exception as e:
                 raise
             finally:
+
+                end_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
+                children_aggregator = sub_duration_aggregator.get()
+
+                inclusive_durs = {}
+                exclusive_durs = {}
+
+                if self.timing:
+                    for char in self.timing.lower():
+                        total_duration = end_times[char] - start_times[char]
+                        inclusive_durs[char] = total_duration
+                        exclusive_durs[char] = total_duration - children_aggregator[char]
+                        parent_aggregator[char] += total_duration
+
+                sub_duration_aggregator.reset(token_agg)
+
+                timing_block = _get_timing_block(inclusive_durs, exclusive_durs, self.timing, self.timing_fmt)
+
+                # Get result/exception from locals() as the finally block runs after return/raise
+                exc = locals().get('e')
+                if exc is None:
+                    log_msg = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(locals()['result'])}"
+                    self.logger.log(self.level, log_msg)
+                else:
+                    log_msg = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(exc)}"
+                    self.logger.warning(log_msg)
+
                 # Restore the context for the upper level
                 tracer_chain.reset(token)
         return sync_wrapper
@@ -322,36 +370,41 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
             token = tracer_chain.set(chain + [current_call_sig])
 
             # Start time measurements
-            start_times = [f() for f in self.timing_funcs]
+            parent_aggregator = sub_duration_aggregator.get()
+            token_agg = sub_duration_aggregator.set(defaultdict(int))
+            start_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
 
             try:
                 result = await func(*args, **kwargs)
-
-                # Stop time measurements
-                end_times = [f() for f in self.timing_funcs]
-                timing_block = _get_timing_block(start_times, end_times, self.timing, self.timing_fmt)
-                
-                # Build the exit log message
-                log_exit = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(result)}"
-                if self.trace_chain and chain:
-                    pending_str = " <== ".join(reversed(chain))
-                    log_exit += f"  (pending: {pending_str})"
-                self.logger.log(self.level, log_exit)
-                
                 return result
             except Exception as e:
-                # Stop time measurements
-                end_times = [f() for f in self.timing_funcs]
-                timing_block = _get_timing_block(start_times, end_times, self.timing, self.timing_fmt)
-
-                # Build the exception log message
-                log_exc = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(e)}"
-                if self.trace_chain and chain:
-                    pending_str = " <== ".join(reversed(chain))
-                    log_exc += f"  (pending: {pending_str})"
-                self.logger.warning(log_exc)
                 raise
             finally:
+                end_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
+
+                children_aggregator = sub_duration_aggregator.get()
+
+                inclusive_durs = {}
+                exclusive_durs = {}
+
+                if self.timing:
+                    for char in self.timing.lower():
+                        total_duration = end_times[char] - start_times[char]
+                        inclusive_durs[char] = total_duration
+                        exclusive_durs[char] = total_duration - children_aggregator[char]
+                        parent_aggregator[char] += total_duration
+
+                sub_duration_aggregator.reset(token_agg)
+                timing_block = _get_timing_block(inclusive_durs, exclusive_durs, self.timing, self.timing_fmt)
+
+                exc = locals().get('e')
+                if exc is None:
+                    log_msg = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(locals()['result'])}"
+                    self.logger.log(self.level, log_msg)
+                else:
+                    log_msg = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(exc)}"
+                    self.logger.warning(log_msg)
+
                 tracer_chain.reset(token)
         return async_wrapper
 

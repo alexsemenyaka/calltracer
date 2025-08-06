@@ -16,6 +16,7 @@ logging.basicConfig(
 trace = CallTracer(level=logging.DEBUG)
 chtrace = CallTracer(level=logging.DEBUG, trace_chain=True, transform=no_self)
 tchtrace = CallTracer(level=logging.DEBUG, trace_chain=True, transform=no_self, timing='chm')
+techtrace = CallTracer(level=logging.DEBUG, trace_chain=True, transform=no_self, timing='CHM')
 
 class AdvancedCalculator:  # pylint: disable=too-few-public-methods
     """A calculator to demonstrate tracing."""
@@ -77,6 +78,33 @@ class ThirdAdvancedCalculator:  # pylint: disable=too-few-public-methods
             return 1
         return n * self.factorial(n - 1)
 
+class FourthAdvancedCalculator:  # pylint: disable=too-few-public-methods
+    """And another copy of the calculator to demonstrate tracing with chaining and profiling times"""
+
+    def __init__(self, name):
+        self.name = name
+
+    @techtrace
+    def factorial(self, n):
+        """Calculates factorial and demonstrates stack tracing."""
+        if n == 2:
+            logging.info("--- Dumping stack, because n == 2 ---")
+            # Call stack() with INFO level to make it stand out in the log
+            stack(level=logging.INFO)
+
+        if n < 0:
+            raise ValueError("Factorial is not defined for negative numbers")
+        if n == 0:
+            return 1
+        return n * self.factorial(n - 1)
+
+@techtrace
+def factorial_function(i: int) -> int:
+    match i:
+        case 0: return 1
+        case 1: return 1
+        case 2: return 2
+        case _: return i*factorial_function(i-1)
 
 calc = AdvancedCalculator("MyCalc")
 logging.info("--- Starting recursive call with stack dump ---")
@@ -89,3 +117,10 @@ calc.factorial(4)
 calc = ThirdAdvancedCalculator("MyCalc3")
 logging.info("--- Starting recursive call with stack dump, chained tracing and profiling times---")
 calc.factorial(4)
+
+calc = FourthAdvancedCalculator("MyCalc4")
+logging.info("--- Starting recursive call with stack dump, chained tracing and exclusive profiling times---")
+calc.factorial(4)
+
+logging.info("--- Starting recursive simple function call with chained tracing and exclusive profiling times---")
+factorial_function(6)
