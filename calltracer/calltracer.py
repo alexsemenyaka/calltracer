@@ -74,10 +74,10 @@ def _readable_duration(duration: int, fmt: DFMT) -> str:
     """
     if fmt == DFMT.NANO:
         return f"{duration} ns"
-    
+
     if fmt == DFMT.MICRO:
         return f"{duration / _NS_IN_US} µs"
-        
+
     if fmt == DFMT.SEC:
         return f"{duration / _NS_IN_SEC} s"
 
@@ -96,12 +96,12 @@ def _readable_duration(duration: int, fmt: DFMT) -> str:
         if duration < 100 * _NS_IN_MS:
             # For durations less than 100ms, behavior is identical to SINGLE
             return _readable_duration(duration, DFMT.SINGLE)
-        
+
         # Decompose duration into hours, minutes, and seconds
         hours, remainder_ns = divmod(duration, _NS_IN_HR)
         minutes, remainder_ns = divmod(remainder_ns, _NS_IN_MIN)
         seconds = remainder_ns / _NS_IN_SEC
-        
+
         hours = int(hours)
         minutes = int(minutes)
 
@@ -111,7 +111,7 @@ def _readable_duration(duration: int, fmt: DFMT) -> str:
         if minutes > 0:
             return f"{minutes} min, {seconds} s"
         return f"{seconds} s"
-    
+
     # Fallback for any unknown format
     raise ValueError(f"Unknown duration format: {fmt}")
 
@@ -122,7 +122,7 @@ def _get_timing_block(inclusive_durs: dict, exclusive_durs: dict, timing_str: st
     """
     if not timing_str:
         return ""
- 
+
     parts = []
     for char in timing_str:
         lower_char = char.lower()
@@ -131,7 +131,7 @@ def _get_timing_block(inclusive_durs: dict, exclusive_durs: dict, timing_str: st
                 duration = exclusive_durs[lower_char]
             else:
                 duration = inclusive_durs[lower_char]
- 
+
             readable_dur = _readable_duration(duration, fmt)
             # В лейбле используем оригинальный символ (T или t)
             parts.append(f"{char}: {readable_dur}")
@@ -174,7 +174,7 @@ def _get_arg_str(func, args, kwargs, tracer_instance):
                 processed_args.append(f"{name}={val_str}")
             else:
                 processed_args.append(f"{name}")
-        
+
         arg_str = ", ".join(processed_args)
 
     except (ValueError, TypeError):
@@ -184,7 +184,7 @@ def _get_arg_str(func, args, kwargs, tracer_instance):
 
 def _log_trace_event(tracer, event_type: str, data: dict):
     """Builds a data record and logs it as either text or JSON."""
-    
+
     base_record = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "event": event_type,
@@ -197,20 +197,24 @@ def _log_trace_event(tracer, event_type: str, data: dict):
         timing_block = data.get("timing_block", "")
         indent = data.get("indent", "")
         current_call_sig = data.get("current_call_sig", "")
-        
+
         if event_type == 'enter':
             log_string = f"{indent}--> Calling {current_call_sig}"
             if tracer.trace_chain and data.get("chain"):
                 chain_str = " <== ".join(reversed(data["chain"]))
                 log_string += f"  <== {chain_str}"
-        
+
         elif event_type == 'exit':
-            display_result = tracer.return_transform(data["result"]) if tracer.return_transform else data["result"]
-            log_string = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(display_result)}"
-        
+            display_result = repr(tracer.return_transform(data["result"]) if tracer.return_transform else data["result"])
+
+            if tracer.max_return_len is not None and len(display_result) > tracer.max_return_len:
+                display_result = display_result[:tracer.max_return_len] + "..."
+
+            log_string = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {display_result}"
+
         elif event_type == 'exception':
             log_string = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(data['exception'])}"
-    
+
     level = logging.WARNING if event_type == 'exception' else tracer.level
     tracer.logger.log(level, log_string)
 
@@ -243,6 +247,11 @@ class _BaseTracer:
                 - If None (default), no truncation is performed.
                 - If 0, argument values are hidden (displayed as '...').
                 - If > 0, the string representation is truncated to this length.
+            return_transform (Callable, optional): A function to transform
+                the return value before logging.
+            max_return_len (int, optional): Maximum length for the string
+                representation of the return value. Works like max_argval_len.
+                Defaults to None (no limit).
             condition (Callable, optional): A function that determines if tracing
                 should be active for a call. It receives the function's
                 qualified name and its arguments (`(func_name, *args, **kwargs)`)
@@ -287,8 +296,9 @@ class _BaseTracer:
         self.trace_chain      = trace_chain
         self.logger           = logger or logging.getLogger(__name__)
         self.transform        = transform or {}
-        self.return_transform = return_transform
         self.max_argval_len   = max_argval_len
+        self.return_transform = return_transform
+        self.max_return_len   = max_return_len
         self.condition        = condition
         self.output           = output
 
@@ -328,62 +338,43 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
 
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
-
-            # check if reporting was turned off upper on the call stack
             if not tracing_enabled_context.get():
                 return func(*args, **kwargs)
 
-            # check if we are allowed to report
-            should_run_tracer = True
-            if self.condition:
-                should_run_tracer = self.condition(func.__qualname__, *args, **kwargs)
-            # and inform future calls down on the call stack
+            should_run_tracer = self.condition(func.__qualname__, *args, **kwargs) if self.condition else True
             token_enabled = tracing_enabled_context.set(should_run_tracer)
 
-            # now, if the tracing is not allowed, just call the function...
             if not should_run_tracer:
                 try:
                     return func(*args, **kwargs)
                 finally:
-                    # ...and restore the context
                     tracing_enabled_context.reset(token_enabled)
 
             chain = tracer_chain.get()
             indent = '    ' * len(chain)
-
             arg_str = _get_arg_str(func, args, kwargs, self)
             current_call_sig = f"{func.__qualname__}({arg_str})"
-            
-            # Build the entry log message
-            log_entry = f"{indent}--> Calling {current_call_sig}"
-            if self.trace_chain and chain:
-                chain_str = " <== ".join(reversed(chain))
-                log_entry += f"  <== {chain_str}"
-            self.logger.log(self.level, log_entry)
 
-            # Update the context for the next level down
-            token = tracer_chain.set(chain + [current_call_sig])
+            _log_trace_event(self, 'enter', {
+                "indent": indent, "current_call_sig": current_call_sig, "chain": chain
+            })
 
-            # Start time measurements
+            token_chain = tracer_chain.set(chain + [current_call_sig])
             parent_aggregator = sub_duration_aggregator.get()
             token_agg = sub_duration_aggregator.set(defaultdict(int))
-
             start_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
 
             try:
                 result = func(*args, **kwargs)
+                # everyting is in finally!
                 return result
-
             except Exception as e:
+                # everyting is in finally!
                 raise
             finally:
-
                 end_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
                 children_aggregator = sub_duration_aggregator.get()
-
-                inclusive_durs = {}
-                exclusive_durs = {}
-
+                inclusive_durs, exclusive_durs = {}, {}
                 if self.timing:
                     for char in self.timing.lower():
                         total_duration = end_times[char] - start_times[char]
@@ -392,27 +383,29 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                         parent_aggregator[char] += total_duration
 
                 sub_duration_aggregator.reset(token_agg)
-
                 timing_block = _get_timing_block(inclusive_durs, exclusive_durs, self.timing, self.timing_fmt)
 
-                # Get result/exception from locals() as the finally block runs after return/raise
                 exc = locals().get('e')
-                if exc is None:
-                    display_result = self.return_transform(result) if self.return_transform else result
-                    log_msg = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(display_result)}"
-                    self.logger.log(self.level, log_msg)
-                else:
-                    log_msg = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(exc)}"
-                    self.logger.warning(log_msg)
+                log_data = {
+                    "indent": indent, "current_call_sig": current_call_sig,
+                    "timing_block": timing_block, "timings_ns": {"inclusive": inclusive_durs, "exclusive": exclusive_durs}
+                }
 
-                # Restore the context for the upper level
-                tracer_chain.reset(token)
+                if exc is None:
+                    log_data["result"] = result
+                    _log_trace_event(self, 'exit', log_data)
+                else:
+                    log_data["exception"] = exc
+                    _log_trace_event(self, 'exception', log_data)
+
+                tracer_chain.reset(token_chain)
                 tracing_enabled_context.reset(token_enabled)
+
         return sync_wrapper
 
 class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
     """A factory for creating decorators that trace ASYNCHRONOUS function calls."""
-    
+
     def __call__(self, func):
         """Makes the instance callable and returns the actual decorator wrapper.
 
@@ -427,58 +420,43 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
 
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
-            # check if reporting was turned off upper on the call stack
             if not tracing_enabled_context.get():
                 return await func(*args, **kwargs)
 
-            # check if we are allowed to report
-            should_run_tracer = True
-            if self.condition:
-                should_run_tracer = self.condition(func.__qualname__, *args, **kwargs)
-            # and inform future calls down on the call stack
+            should_run_tracer = self.condition(func.__qualname__, *args, **kwargs) if self.condition else True
             token_enabled = tracing_enabled_context.set(should_run_tracer)
 
-            # now, if the tracing is not allowed, just call the function...
             if not should_run_tracer:
                 try:
                     return await func(*args, **kwargs)
                 finally:
-                    # ...and restore the context
                     tracing_enabled_context.reset(token_enabled)
 
             chain = tracer_chain.get()
             indent = '    ' * len(chain)
-
             arg_str = _get_arg_str(func, args, kwargs, self)
             current_call_sig = f"{func.__qualname__}({arg_str})"
 
-            # Build the entry log message
-            log_entry = f"{indent}--> Calling {current_call_sig}"
-            if self.trace_chain and chain:
-                chain_str = " <== ".join(reversed(chain))
-                log_entry += f"  <== {chain_str}"
-            self.logger.log(self.level, log_entry)
+            _log_trace_event(self, 'enter', {
+                "indent": indent, "current_call_sig": current_call_sig, "chain": chain
+            })
 
-            token = tracer_chain.set(chain + [current_call_sig])
-
-            # Start time measurements
+            token_chain = tracer_chain.set(chain + [current_call_sig])
             parent_aggregator = sub_duration_aggregator.get()
             token_agg = sub_duration_aggregator.set(defaultdict(int))
             start_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
 
             try:
                 result = await func(*args, **kwargs)
+                # everyting is in finally!
                 return result
             except Exception as e:
+                # everyting is in finally!
                 raise
             finally:
                 end_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
-
                 children_aggregator = sub_duration_aggregator.get()
-
-                inclusive_durs = {}
-                exclusive_durs = {}
-
+                inclusive_durs, exclusive_durs = {}, {}
                 if self.timing:
                     for char in self.timing.lower():
                         total_duration = end_times[char] - start_times[char]
@@ -490,16 +468,21 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                 timing_block = _get_timing_block(inclusive_durs, exclusive_durs, self.timing, self.timing_fmt)
 
                 exc = locals().get('e')
-                if exc is None:
-                    display_result = self.return_transform(result) if self.return_transform else result
-                    log_msg = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {repr(display_result)}"
-                    self.logger.log(self.level, log_msg)
-                else:
-                    log_msg = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(exc)}"
-                    self.logger.warning(log_msg)
+                log_data = {
+                    "indent": indent, "current_call_sig": current_call_sig,
+                    "timing_block": timing_block, "timings_ns": {"inclusive": inclusive_durs, "exclusive": exclusive_durs}
+                }
 
+                if exc is None:
+                    log_data["result"] = result
+                    _log_trace_event(self, 'exit', log_data)
+                else:
+                    log_data["exception"] = exc
+                    _log_trace_event(self, 'exception', log_data)
+
+                tracer_chain.reset(token_chain)
                 tracing_enabled_context.reset(token_enabled)
-                tracer_chain.reset(token)
+
         return async_wrapper
 
 
