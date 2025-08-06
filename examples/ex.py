@@ -13,9 +13,10 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+transform={ ("SecondAdvancedCalculator.factorial", "self") : (lambda _:None) }
 
 trace = CallTracer(level=logging.DEBUG)
-chtrace = CallTracer(level=logging.DEBUG, trace_chain=True)
+chtrace = CallTracer(level=logging.DEBUG, trace_chain=True, transform=transform)
 
 class AdvancedCalculator:  # pylint: disable=too-few-public-methods
     """A calculator to demonstrate tracing."""
@@ -56,7 +57,6 @@ class SecondAdvancedCalculator:  # pylint: disable=too-few-public-methods
         if n == 0:
             return 1
         return n * self.factorial(n - 1)
-
 
 
 calc = AdvancedCalculator("MyCalc")
