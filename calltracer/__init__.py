@@ -6,10 +6,12 @@ for tracing function calls, and a function (stack) for logging the current call 
 import importlib.metadata
 
 from .calltracer import CallTracer, aCallTracer, stack, tracer_chain, DFMT, no_self
+from .richlogging import RichPyTraceHandler
+
 
 _metadata = importlib.metadata.metadata("pytracecall")
 __version__ = _metadata["Version"]
 __author__ = _metadata["Author-email"]
 __license__ = _metadata["License"]
 
-__all__ = ["CallTracer", "aCallTracer", "stack", "tracer_chain", "DFMT", "no_self"]
+__all__ = ["CallTracer", "aCallTracer", "stack", "tracer_chain", "DFMT", "no_self", "RichPyTraceHandler"]

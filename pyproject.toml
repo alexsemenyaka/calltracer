@@ -29,10 +29,13 @@ classifiers = [
     "Topic :: System :: Logging",
 ]
 
-#[project.urls]
-#Homepage = ""
-#Repository = ""
-#Issues = ""
+[project.urls]
+Homepage = "https://github.com/alexsemenyaka/calltracer"
+Repository = "https://github.com/alexsemenyaka/calltracer.git"
+Issues = "https://github.com/alexsemenyaka/calltracer/issues"
+
+[project.optional-dependencies]
+rich = [ "rich>=13.0.0", ]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
