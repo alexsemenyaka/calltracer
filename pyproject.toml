@@ -1,6 +1,6 @@
 [project]
 name = "pytracecall"
-version = "4.0.0"
+version = "4.1.0"
 description = "pytracecall: A debugging module with sync and async decorators (CallTracer and aCallTracer) for tracing function calls, and a function (stack) for logging the current call stack"
 authors = [
     { name = "Alex Semenyaka", email = "alex.semenyaka@gmail.com" },
