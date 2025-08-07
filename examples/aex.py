@@ -8,7 +8,7 @@ import logging
 
 # The synchronous stack() function can still be used
 # Assuming aCallTracer is in its own module
-from calltracer import aCallTracer, stack
+from calltracer import aCallTracer, stack, no_self
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 
 async_trace = aCallTracer(level=logging.DEBUG)
-async_chtrace = aCallTracer(level=logging.DEBUG, trace_chain=True)
+async_chtrace = aCallTracer(level=logging.DEBUG, trace_chain=True, transform=no_self)
 
 
 class AsyncDataFetcher:
@@ -63,14 +63,8 @@ class AsyncSecondDataFetcher:
         """
         A sample async task that simulates I/O operation and gets traced
         """
-        logging.info("-> Starting to process item '%s'", item_id)
         await asyncio.sleep(delay)
 
-        # You can still use the synchronous stack() function inside async code
-        if item_id == "B":
-            stack(level=logging.INFO)
-
-        logging.info("<- Finished processing item '%s'", item_id)
         return f"Processed {item_id}"
 
     @async_chtrace
@@ -82,7 +76,7 @@ class AsyncSecondDataFetcher:
         return await self.process_item_medium(item_id, delay)
 
 
-async def main():
+async def main1():
     """Main function to set up and run the async example."""
     fetcher = AsyncDataFetcher("ConcurrentFetcher")
 
@@ -114,4 +108,4 @@ async def main():
 
 if __name__ == "__main__":
     # Use asyncio.run() to execute the top-level async main() function
-    asyncio.run(main())
+    asyncio.run(main1())
