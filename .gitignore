@@ -13,6 +13,7 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+coverage.xml
 
 # Too home-grown and raw
 Makefile
@@ -24,3 +25,4 @@ tmp/
 *.log
 requirements.txt.tmp
 requirements.in
+*.swp
