@@ -31,7 +31,7 @@ A powerful, flexible, and user-friendly debugging module for tracing function ca
     -   **Rich Interactive Output**: Optional integration with the `rich` library to render call stacks as beautiful, dynamic trees.
     -   **Structured JSON Output**: Log trace events as JSON objects for easy parsing, filtering, and analysis by automated systems.
 -   **Conditional Tracing**: Define custom rules to activate tracing only for specific calls, preventing log spam and focusing on what matters.
--   **Argument & Return Value Control**: Mask sensitive data (like passwords), truncate long values, and even hide arguments (like `self`) from the output. Consider use it with the [filter-url module](https://pypi.org/project/filter-url/)
+-   **Argument & Return Value Control**: Mask sensitive data (like passwords), truncate long values, and even hide arguments (like `self`) from the output. Consider to use it with the [filter-url module](https://pypi.org/project/filter-url/) if you are dealing with URLs to avoid sending sensitive information to log files.
 -   **Builtin Performance Profiling**: Measure execution time with multiple system clocks. Differentiate between **inclusive** time (total) and **exclusive** time (function's own work, excluding children).
 -   **Runtime Control**: Programmatically enable or disable any tracer instance on the fly.
 
