@@ -5,172 +5,74 @@
 [![Coverage Status](https://coveralls.io/repos/github/alexsemenyaka/calltracer/badge.svg?branch=main)](https://coveralls.io/github/alexsemenyaka/calltracer?branch=main)
 [![CI/CD Status](https://github.com/alexsemenyaka/calltracer/actions/workflows/ci.yml/badge.svg)](https://github.com/alexsemenyaka/calltracer/actions/workflows/ci.yml)
 
-`pytracecall` is a lightweight, zero-dependency Python debugging toolkit designed to provide clear insight into your code's execution flow. Whether you're untangling complex recursion, visualizing concurrent `asyncio` tasks, or simply want to see the journey of your data, `pytracecall` offers a simple and powerful solution without the overhead of a full debugger.
+# Examples for `pytracecall`
 
-It integrates seamlessly with Python's built-in `logging` module, making it a natural fit for any project.
+This directory contains practical examples demonstrating the various features of the `pytracecall` library. Each file is designed to be run independently and showcases a specific set of capabilities.
 
-***
+To run the examples that use the `rich` library, you must first install the optional dependency:
+```bash
+pip install "pytracecall[rich]"
+```
 
-## Key Features
+---
 
--    **Sync & Async Support**: Dedicated, purpose-built decorators for both standard (`def`) and asynchronous (`async def`) functions.
--    **Optional Call Chain Tracing**: Go beyond simple indentation and see the complete call stack for every traced function call.
--    **Concurrency-Safe**: The async tracer is built with `contextvars` to safely trace hundreds of concurrent tasks without mixing up their logs.
--    **Point-in-Time Stack Inspection**: A simple `stack()` function to dump the current call stack at any point in your code.
--    **Lightweight & Zero-Dependency**: Pure Python with no external libraries required, ensuring easy integration.
+## `ex.py` - Core Features & Text Output
 
-***
+This file is a showcase of all the core features of the synchronous `CallTracer` using the standard text-based logger. It's a great starting point to understand the raw data and formatting options provided by the module.
 
-## Installation
+### Key Concepts Shown:
 
-You can install the package from the Python Package Index (PyPI) using **`pip`**.
+* **Basic Tracing**: Simple decoration of a recursive function.
+* **Call Chain (`trace_chain=True`)**: See the full call stack in every log message for deep context.
+* **Performance Profiling (`timing`)**: Demonstrates logging of inclusive (`'chm'`) and exclusive (`'CHM'`) execution times using different clocks.
+* **IDE Integration (`ide_support=True`)**: Shows how log output can be formatted to create clickable links in IDEs like VSCode and PyCharm.
+* **Terminal Hyperlinks (`term_support=True`)**: Demonstrates OSC 8 hyperlinks for modern terminals like iTerm2, allowing you to `Cmd-Click` a function call to jump to its source code.
+* **Stack Inspection**: Shows the use of the `stack()` function to dump the call stack at a specific point.
+
+### How to Run:
 
 ```bash
-pip install pytracecall
+python3 ex.py
 ```
 
-***
+---
 
-## Quick Start
+## `aex.py` - Asynchronous & Concurrent Tracing
 
-Get a feel for `pytracecall` in 30 seconds.
+This file focuses on `aCallTracer` and its critical ability to safely trace concurrent asynchronous code. It is the best example to understand the power of using `contextvars` for isolating execution contexts.
 
-```python
-import logging
-from calltracer import CallTracer
+### Key Concepts Shown:
 
-# Basic logging config
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+* **Tracing `async def` Functions**: The basic usage of `aCallTracer`.
+* **Concurrency Safety**: This is the main highlight. The example uses `asyncio.gather` to run two processing tasks concurrently. The log output clearly shows that even though the tasks are interleaved, their call chains (`trace_chain`) and indentation are kept perfectly separate.
 
-# Create a tracer instance and decorate your function
-trace = CallTracer()
+### How to Run:
 
-@trace
-def greet(name):
-    print(f"Hello, {name}!")
-
-greet("World")
+```bash
+python3 aex.py
 ```
 
-**Output:**
+### When is this useful?
 
+This demonstrates the most important feature for modern Python applications. If you are debugging a web server, a data pipeline, or any `asyncio`-based program with multiple simultaneous operations, this proves that `pytracecall` can trace them reliably without mixing up their logs.
+
+---
+
+## `rex.py` - Rich Interactive Trees
+
+This file showcases the advanced visual debugging capabilities provided by the `RichPyTraceHandler`, which is available as an optional feature.
+
+### Key Concepts Shown:
+
+* **JSON Output (`output='json'`)**: This example demonstrates the recommended pattern for rich logging. The tracer is configured to produce structured JSON data, which the `RichPyTraceHandler` then consumes to build the visual tree. This decouples data generation from presentation.
+* **Append-Only Mode (`overwrite=False`)**: The default `rich` mode. It creates a beautiful, downward-growing tree where both the "enter" (➡️) and "exit" (⬅️) for each call are preserved. This is excellent for post-mortem analysis of a complete function run.
+* **Live Overwrite Mode (`overwrite=True`)**: This mode uses `rich.live.Live` to create a dynamic display where the "enter" node for a function is overwritten by its corresponding "exit" node. This provides a more compact, real-time view that is ideal for monitoring longer-running processes.
+
+### How to Run:
+
+It is recommended to run this example as a module using the `-m` flag from the project's root directory. This ensures Python's import system can correctly locate the `calltracer` package.
+
+```bash
+# From the project's root directory
+python3 -m examples.rex
 ```
---> Calling greet('World')
-Hello, World!
-<-- Exiting greet('World'), returned: None
-```
-
-***
-
-## Core Concepts & Examples
-
-`pytracecall` provides two main decorator classes: `CallTracer` for synchronous code and `aCallTracer` for asynchronous code.
-
-### Synchronous Tracing with `CallTracer`
-
-Use `CallTracer` to debug standard Python functions, especially useful for understanding recursion.
-
-```python
-import logging
-from calltracer import CallTracer, chtrace
-
-# A tracer with the optional call chain feature enabled
-chtrace = CallTracer(level=logging.DEBUG, trace_chain=True)
-
-class AdvancedCalculator:
-    @chtrace
-    def factorial(self, n):
-        if n == 0:
-            return 1
-        return n * self.factorial(n - 1)
-
-calc = AdvancedCalculator("MyCalc")
-calc.factorial(4)
-```
-
-The `trace_chain=True` parameter provides incredibly detailed logs, showing not just the depth but the entire history of traced calls for each step.
-
-**Output with Chained Tracing:**
-
-```
---> Calling SecondAdvancedCalculator.factorial(..., 4)
-    --> Calling SecondAdvancedCalculator.factorial(..., 3)  <== SecondAdvancedCalculator.factorial(..., 4)
-        --> Calling SecondAdvancedCalculator.factorial(..., 2)  <== SecondAdvancedCalculator.factorial(..., 3) <== SecondAdvancedCalculator.factorial(..., 4)
-            --> Calling SecondAdvancedCalculator.factorial(..., 1)  <== SecondAdvancedCalculator.factorial(..., 2) <== ...
-                --> Calling SecondAdvancedCalculator.factorial(..., 0)  <== SecondAdvancedCalculator.factorial(..., 1) <== ...
-                <-- Exiting SecondAdvancedCalculator.factorial(..., 0), returned: 1  (pending: SecondAdvancedCalculator.factorial(..., 1) <== ...)
-            <-- Exiting SecondAdvancedCalculator.factorial(..., 1), returned: 1  (pending: SecondAdvancedCalculator.factorial(..., 2) <== ...)
-        <-- Exiting SecondAdvancedCalculator.factorial(..., 2), returned: 2  (pending: SecondAdvancedCalculator.factorial(..., 3) <== ...)
-    <-- Exiting SecondAdvancedCalculator.factorial(..., 3), returned: 6  (pending: SecondAdvancedCalculator.factorial(..., 4))
-<-- Exiting SecondAdvancedCalculator.factorial(..., 4), returned: 24
-```
-
-### Asynchronous Tracing with `aCallTracer`
-
-Use `aCallTracer` to trace `async def` functions. It uses `contextvars` to ensure that even thousands of interleaved concurrent tasks are traced independently and correctly.
-
-```python
-import asyncio
-import logging
-from calltracer import aCallTracer
-
-async_chtrace = aCallTracer(level=logging.DEBUG, trace_chain=True)
-
-class AsyncDataFetcher:
-    @async_chtrace
-    async def process_item_upper(self, item_id: str, delay: float):
-        return await self.process_item_medium(item_id, delay)
-
-    @async_chtrace
-    async def process_item_medium(self, item_id: str, delay: float):
-        return await self.process_item(item_id, delay)
-
-    @async_chtrace
-    async def process_item(self, item_id: str, delay: float):
-        await asyncio.sleep(delay)
-        return f"Processed {item_id}"
-
-async def main():
-    fetcher = AsyncDataFetcher()
-    await asyncio.gather(
-        fetcher.process_item_upper(item_id="A", delay=0.2),
-        fetcher.process_item_upper(item_id="B", delay=0.1),
-    )
-
-asyncio.run(main())
-```
-
-**Output with Concurrent Chained Tracing:**
-
-The output clearly shows two tasks (for item 'A' and 'B') starting concurrently. Each task maintains its own separate call chain, demonstrating the power of `contextvars`.
-
-```
---> Calling AsyncSecondDataFetcher.process_item_upper(..., item_id='A', delay=0.2)
-    --> Calling AsyncSecondDataFetcher.process_item_medium(..., 'A', 0.2)  <== AsyncSecondDataFetcher.process_item_upper(...)
-        --> Calling AsyncSecondDataFetcher.process_item(..., 'A', 0.2)  <== AsyncSecondDataFetcher.process_item_medium(...) <== ...
---> Calling AsyncSecondDataFetcher.process_item_upper(..., item_id='B', delay=0.1)
-    --> Calling AsyncSecondDataFetcher.process_item_medium(..., 'B', 0.1)  <== AsyncSecondDataFetcher.process_item_upper(...)
-        --> Calling AsyncSecondDataFetcher.process_item(..., 'B', 0.1)  <== AsyncSecondDataFetcher.process_item_medium(...) <== ...
-<-- Exiting AsyncSecondDataFetcher.process_item(..., 'B', 0.1), returned: 'Processed B'  (pending: AsyncSecondDataFetcher.process_item_medium(...) <== ...)
-<-- Exiting AsyncSecondDataFetcher.process_item_medium(..., 'B', 0.1), returned: 'Processed B'  (pending: AsyncSecondDataFetcher.process_item_upper(...))
-<-- Exiting AsyncSecondDataFetcher.process_item_upper(..., item_id='B', delay=0.1), returned: 'Processed B'
-<-- Exiting AsyncSecondDataFetcher.process_item(..., 'A', 0.2), returned: 'Processed A'  (pending: AsyncSecondDataFetcher.process_item_medium(...) <== ...)
-<-- Exiting AsyncSecondDataFetcher.process_item_medium(..., 'A', 0.2), returned: 'Processed A'  (pending: AsyncSecondDataFetcher.process_item_upper(...))
-<-- Exiting AsyncSecondDataFetcher.process_item_upper(..., item_id='A', delay=0.2), returned: 'Processed A'
-```
-
-***
-
-## API Reference
-
-### `CallTracer(level=DEBUG, trace_chain=False, logger=None)`
-
-Creates a decorator for tracing **synchronous** (`def`) functions.
-
-### `aCallTracer(level=DEBUG, trace_chain=False, logger=None)`
-
-Creates a decorator for tracing **asynchronous** (`async def`) functions.
-
-### `stack(level=DEBUG, logger=None, limit=None, start=0)`
-
-A function that logs the current Python call stack at the point it is called. Works in both sync and async code.
