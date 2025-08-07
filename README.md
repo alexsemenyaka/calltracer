@@ -31,7 +31,7 @@ A powerful, flexible, and user-friendly debugging module for tracing function ca
     -   **Rich Interactive Output**: Optional integration with the `rich` library to render call stacks as beautiful, dynamic trees.
     -   **Structured JSON Output**: Log trace events as JSON objects for easy parsing, filtering, and analysis by automated systems.
 -   **Conditional Tracing**: Define custom rules to activate tracing only for specific calls, preventing log spam and focusing on what matters.
--   **Argument & Return Value Control**: Mask sensitive data (like passwords), truncate long values, and even hide arguments (like `self`) from the output.
+-   **Argument & Return Value Control**: Mask sensitive data (like passwords), truncate long values, and even hide arguments (like `self`) from the output. Consider use it with the [filter-url module](https://pypi.org/project/filter-url/)
 -   **Builtin Performance Profiling**: Measure execution time with multiple system clocks. Differentiate between **inclusive** time (total) and **exclusive** time (function's own work, excluding children).
 -   **Runtime Control**: Programmatically enable or disable any tracer instance on the fly.
 
@@ -165,7 +165,7 @@ ide_trace = CallTracer(ide_support=True)
 term_trace = CallTracer(term_support=True)
 ```
 
-**Output in iTerm2 (with `term_support=True`):** The function signature becomes a clickable link (check a bottom left corner) that opens the file at the correct line in your editor:
+**Output in iTerm2 (with `term_support=True`):** The function signature becomes a clickable link (check the bottom left corner) that opens the file at the correct line in your editor:
 ![OSC 8 Example](https://raw.githubusercontent.com/alexsemenyaka/calltracer/refs/heads/main/images/demo-osc8.png)
 
 #### Asynchronous Tracing
