@@ -2,6 +2,7 @@
 calltracer: A debugging module with a decorator (CallTracer) for
 tracing function calls and a function (stack) for logging the current call stack.
 """
+import os
 import time
 import math
 import json
@@ -177,7 +178,7 @@ def _get_arg_str(func, args, kwargs, tracer_instance):
 
         arg_str = ", ".join(processed_args)
 
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # pragma: no cover
         arg_str = ", ".join([repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()])
 
     return arg_str
@@ -198,8 +199,18 @@ def _log_trace_event(tracer, event_type: str, data: dict):
         indent = data.get("indent", "")
         current_call_sig = data.get("current_call_sig", "")
 
+        if data.get("ide") or data.get("osc8"):
+            filename = data.get("filename")
+            lineno   = data.get("lineno")
+            if data.get("ide"):
+                output = f'File "{filename}", line {data.get("lineno")}, in {current_call_sig}'
+            else:
+                output = f'\033]8;;file://{filename}#{lineno}\033\\{current_call_sig}\033]8;;\033\\'
+        else:
+            output = f'Calling {current_call_sig}' if event_type == 'enter' else f'Exiting {current_call_sig}'
+
         if event_type == 'enter':
-            log_string = f"{indent}--> Calling {current_call_sig}"
+            log_string = f"{indent}--> {output}"
             if tracer.trace_chain and data.get("chain"):
                 chain_str = " <== ".join(reversed(data["chain"]))
                 log_string += f"  <== {chain_str}"
@@ -210,10 +221,10 @@ def _log_trace_event(tracer, event_type: str, data: dict):
             if tracer.max_return_len is not None and len(display_result) > tracer.max_return_len:
                 display_result = display_result[:tracer.max_return_len] + "..."
 
-            log_string = f"{timing_block}{indent}<-- Exiting {current_call_sig}, returned: {display_result}"
+            log_string = f"{timing_block}{indent}<-- {output}, returned: {display_result}"
 
         elif event_type == 'exception':
-            log_string = f"{timing_block}{indent}<!> Exiting {current_call_sig} with exception: {repr(data['exception'])}"
+            log_string = f"{timing_block}{indent}<!> {output} with exception: {repr(data['exception'])}"
 
     level = logging.WARNING if event_type == 'exception' else tracer.level
     tracer.logger.log(level, log_string)
@@ -227,7 +238,8 @@ class _BaseTracer:
                  transform=None, max_argval_len=None,
                  return_transform: Optional[Callable] = None, max_return_len=None,
                  condition: Optional[Callable] = None, timing: str = None, timing_fmt: DFMT = DFMT.SINGLE,
-                 output: str = 'text'):
+                 output: str = 'text', ide_support: bool = False, term_support: bool = False,
+                 rel_path: bool = True):
         """
         Initializes the factory.
 
@@ -291,6 +303,23 @@ class _BaseTracer:
                   (<100ms), it behaves like SINGLE.
             output (str, optional): The output format for trace records.
                 Can be 'text' (default) or 'json'.
+            ide_support (bool, optional): If True, includes the file path
+                and line number of the function definition in text logs
+                using a format like 'File "path.py", line N, in func_sig'.
+                This makes log entries clickable in IDEs like PyCharm and VSCode,
+                linking directly to the source code.
+                Only applies when output='text'.
+                Defaults to False.
+            term_support (bool, optional): If True, the file and a line number
+                are printer as a hyperlink in OSC 8 format, supported by
+                modern terminals (check the terminal docs to find out how to
+                use it, like Cmd-Click on iTerm2).
+                Only applies when output='text'.
+                No effect if ide_support==True.
+                Defaults to False.
+            rel_path (bool, optional): If True and ide_support or term_support
+                are True, uses relative path for filename, othervise absolute.
+                Defaults to True
         """
         self.level            = level
         self.trace_chain      = trace_chain
@@ -301,6 +330,10 @@ class _BaseTracer:
         self.max_return_len   = max_return_len
         self.condition        = condition
         self.output           = output
+        self.enabled          = True
+        self.ide_support      = ide_support
+        self.term_support     = term_support
+        self.rel_path         = rel_path
 
         self.timing_funcs     = []
         self.timing           = timing
@@ -309,6 +342,15 @@ class _BaseTracer:
             for char in self.timing.lower():
                 if char in _TIMERS:
                     self.timing_funcs.append(_TIMERS[char])
+
+    def enable(self):
+        """Enables tracing for this decorator instance."""
+        self.enabled = True
+
+    def disable(self):
+        """Disables tracing for this decorator instance."""
+        self.enabled = False
+ 
 
 class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
     """A factory for creating decorators that trace SYNCHRONOUS function/method calls.
@@ -338,7 +380,7 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
 
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
-            if not tracing_enabled_context.get():
+            if not tracing_enabled_context.get() or not self.enabled:
                 return func(*args, **kwargs)
 
             should_run_tracer = self.condition(func.__qualname__, *args, **kwargs) if self.condition else True
@@ -354,11 +396,24 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
             indent = '    ' * len(chain)
             arg_str = _get_arg_str(func, args, kwargs, self)
             current_call_sig = f"{func.__qualname__}({arg_str})"
+            if (self.ide_support or self.term_support) and self.output == 'text':
+                filename = inspect.getfile(func)
+                filename = os.path.relpath(filename) if self.rel_path else os.path.abspath(filename)
+                try:
+                    lineno = inspect.getsourcelines(func)[1] + 1  ## lineno is the decorator's line :)
+                except OSError:
+                    lineno = 'undef'
+            else:
+                filename = None
+                lineno = None
 
             _log_trace_event(self, 'enter', {
-                "indent": indent, "current_call_sig": current_call_sig, "chain": chain
+                "indent": indent, "current_call_sig": current_call_sig, "chain": chain,
+                "filename": filename, "lineno": lineno, "ide": self.ide_support, "osc8": self.term_support,
+                "ide": self.ide_support, "osc8": self.term_support,
             })
 
+            exc = None
             token_chain = tracer_chain.set(chain + [current_call_sig])
             parent_aggregator = sub_duration_aggregator.get()
             token_agg = sub_duration_aggregator.set(defaultdict(int))
@@ -369,6 +424,7 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                 # everyting is in finally!
                 return result
             except Exception as e:
+                exc = e
                 # everyting is in finally!
                 raise
             finally:
@@ -385,10 +441,11 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                 sub_duration_aggregator.reset(token_agg)
                 timing_block = _get_timing_block(inclusive_durs, exclusive_durs, self.timing, self.timing_fmt)
 
-                exc = locals().get('e')
                 log_data = {
                     "indent": indent, "current_call_sig": current_call_sig,
-                    "timing_block": timing_block, "timings_ns": {"inclusive": inclusive_durs, "exclusive": exclusive_durs}
+                    "timing_block": timing_block, "timings_ns": {"inclusive": inclusive_durs, "exclusive": exclusive_durs},
+                    "filename": filename, "lineno": lineno,
+                    "ide": self.ide_support, "osc8": self.term_support,
                 }
 
                 if exc is None:
@@ -420,7 +477,7 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
 
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
-            if not tracing_enabled_context.get():
+            if not tracing_enabled_context.get() or not self.enabled:
                 return await func(*args, **kwargs)
 
             should_run_tracer = self.condition(func.__qualname__, *args, **kwargs) if self.condition else True
@@ -437,10 +494,21 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
             arg_str = _get_arg_str(func, args, kwargs, self)
             current_call_sig = f"{func.__qualname__}({arg_str})"
 
+            if (self.ide_support or self.term_support) and self.output == 'text':
+                filename = inspect.getfile(func)
+                filename = os.path.relpath(filename) if self.rel_path else os.path.abspath(filename)
+                lineno = inspect.getsourcelines(func)[1]
+            else:
+                filename = None
+                lineno = None
+
             _log_trace_event(self, 'enter', {
-                "indent": indent, "current_call_sig": current_call_sig, "chain": chain
+                "indent": indent, "current_call_sig": current_call_sig, "chain": chain,
+                "filename": filename, "lineno": lineno,
+                "ide": self.ide_support, "osc8": self.term_support,
             })
 
+            exc = None
             token_chain = tracer_chain.set(chain + [current_call_sig])
             parent_aggregator = sub_duration_aggregator.get()
             token_agg = sub_duration_aggregator.set(defaultdict(int))
@@ -451,6 +519,7 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                 # everyting is in finally!
                 return result
             except Exception as e:
+                exc = e
                 # everyting is in finally!
                 raise
             finally:
@@ -467,10 +536,11 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                 sub_duration_aggregator.reset(token_agg)
                 timing_block = _get_timing_block(inclusive_durs, exclusive_durs, self.timing, self.timing_fmt)
 
-                exc = locals().get('e')
                 log_data = {
                     "indent": indent, "current_call_sig": current_call_sig,
-                    "timing_block": timing_block, "timings_ns": {"inclusive": inclusive_durs, "exclusive": exclusive_durs}
+                    "timing_block": timing_block, "timings_ns": {"inclusive": inclusive_durs, "exclusive": exclusive_durs},
+                    "filename": filename, "lineno": lineno,
+                    "ide": self.ide_support, "osc8": self.term_support,
                 }
 
                 if exc is None:

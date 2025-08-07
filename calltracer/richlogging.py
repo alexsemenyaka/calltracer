@@ -65,7 +65,7 @@ class RichPyTraceHandler(logging.Handler):
             if "event" not in data or "current_call_sig" not in data:
                 self.console.print(record.getMessage())
                 return
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError):  # pragma: no cover
             self.console.print(record.getMessage())
             return
 
@@ -93,7 +93,8 @@ class RichPyTraceHandler(logging.Handler):
             node_stack.append(new_node)
 
         elif event in ("exit", "exception"):
-            if not node_stack: return
+            if not node_stack:  # pragma: no cover
+                return
             current_node = node_stack.pop()
 
             timing_block = data.get("timing_block", "").strip()

@@ -1,68 +1,71 @@
-# pytracecall
 [![PyPI version](https://img.shields.io/pypi/v/pytracecall.svg)](https://pypi.org/project/pytracecall/)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pytracecall.svg)](https://pypi.org/project/pytracecall/)
 [![PyPI - License](https://img.shields.io/pypi/l/pytracecall.svg)](https://pypi.org/project/pytracecall/)
 [![Coverage Status](https://coveralls.io/repos/github/alexsemenyaka/calltracer/badge.svg?branch=main)](https://coveralls.io/github/alexsemenyaka/calltracer?branch=main)
 [![CI/CD Status](https://github.com/alexsemenyaka/calltracer/actions/workflows/ci.yml/badge.svg)](https://github.com/alexsemenyaka/calltracer/actions/workflows/ci.yml)
 
-# Python Call Tracer Module
+A powerful, flexible, and user-friendly debugging module for tracing function calls in Python.
 
-A debugging module with decorators (`CallTracer`, `aCallTracer`) and a function (`stack`) for tracing function calls and logging the call stack.
+`pytracecall` provides simple yet powerful tools to help you understand your code's execution flow without a full step-by-step debugger. It is designed to integrate seamlessly with Python's standard `logging` module and can produce output for human analysis, IDEs, and automated systems.
 
-This module provides simple yet powerful tools to help you understand your code's execution flow without the need for a full step-by-step debugger. It is designed to integrate seamlessly with Python's standard `logging` module.
+---
 
-***
+## Why PyTraceCall?
+
+* **Unmatched Insight, Zero Intrusion**: Get deep insights into your code's execution flow, arguments, return values, and performance without modifying your core logic. The decorator pattern keeps your code clean and readable.
+* **Debug Concurrency with Confidence**: Built from the ground up with `contextvars`, `pytracecall` provides clear, isolated traces for complex `asyncio` applications, eliminating the guesswork of concurrent execution flows.
+* **From Quick Glance to Deep Analysis**: Whether you need a quick print-style debug, a detailed performance profile with exclusive timings, or structured JSON for automated analysis, the flexible API scales to your needs.
+* **Highly Configurable & User-Friendly**: Fine-tune everything from output colors and argument visibility to conditional tracing triggers. The power is in your hands.
+* **A Joy to Use**: With features like clickable IDE/terminal integration and beautiful `rich` tree views, debugging stops being a chore and becomes an insightful, and even enjoyable, experience.
+
+---
 
 ## Features
 
 -   **Synchronous and Asynchronous Tracing**: Decorators for both standard (`def`) and asynchronous (`async def`) functions.
--   **Concurrency Safe**: The async tracer (`aCallTracer`) uses `contextvars` to safely trace concurrent tasks without mixing up logs.
--   **Data Flow Visibility**: Logs function arguments and return values.
--   **Recursion Visualization**: Automatically indents log messages to clearly show recursion depth, even in concurrent contexts.
--   **Stack Inspection**: Use the `stack()` function to log the current call stack at any point in your code.
--   **Logging Integration**: Works with the standard `logging` module.
+-   **Rich Interactive Output**: Optional integration with the `rich` library to render call stacks as beautiful, dynamic trees.
+-   **IDE & Terminal Integration**: Generates log entries that are clickable in modern IDEs (VSCode, PyCharm) and terminals (iTerm2 with OSC 8 support), taking you directly to the source code line.
+-   **Advanced Performance Profiling**: Measure execution time with multiple system clocks. Differentiate between **inclusive** time (total) and **exclusive** time (function's own work, excluding children).
+-   **Conditional Tracing**: Define custom rules to activate tracing only for specific calls, preventing log spam and focusing on what matters.
+-   **Argument & Return Value Control**: Mask sensitive data (like passwords), truncate long values, and even hide arguments (like `self`) from the output.
+-   **Structured JSON Output**: Log trace events as JSON objects for easy parsing, filtering, and analysis by automated systems.
+-   **Runtime Control**: Programmatically enable or disable any tracer instance on the fly.
+-   **Concurrency Safe**: Uses `contextvars` to safely trace concurrent tasks without mixing up call chains.
 
-***
+---
 
 ## Installation
 
-You can install the package from the Python Package Index (PyPI) using **`pip`**.
+You can install the package from PyPI using **`pip`**.
 
 ```bash
 pip install pytracecall
 ```
 
-To ensure you have the latest version, you can use the `--upgrade` flag:
+To enable the optional `rich` integration for beautiful tree-like logging, install the `rich` extra:
 
 ```bash
-pip install --upgrade pytracecall
+pip install "pytracecall[rich]"
 ```
 
-***
+---
 
-## Synchronous Usage
+## Usage Examples
+
+### Basic Synchronous Tracing
 
 First, ensure you configure Python's `logging` module to see the output.
 
-### Basic Configuration
-
 ```python
 import logging
+from calltracer import CallTracer
 
 # Configure logging to display DEBUG level messages
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(message)s',
     datefmt='%H:%M:%S'
 )
-```
-
-### Basic Tracing
-
-Use the `CallTracer` instance as a decorator to trace a synchronous function.
-
-```python
-from calltracer import CallTracer
 
 trace = CallTracer()
 
@@ -74,110 +77,156 @@ add(10, 5)
 ```
 
 **Output:**
-
 ```
-21:15:10 - DEBUG - --> Calling add(10, 5)
-21:15:10 - DEBUG - <-- Exiting add, returned: 15
+21:15:10 - --> Calling add(x=10, y=5)
+21:15:10 - <-- Exiting add(x=10, y=5), returned: 15
 ```
 
-***
+### Advanced Features Showcase
 
-## Asynchronous Usage
+The true power of `pytracecall` lies in its rich configuration.
 
-The `aCallTracer` decorator is designed specifically for `async def` functions and is safe for concurrent execution.
+#### Rich Interactive Trees
 
-### Async Example
+For the most intuitive visualization, use the `RichPyTraceHandler`.
 
+**Code (`rex.py`):**
 ```python
-import asyncio
 import logging
-from calltracer import aCallTracer, stack
+from calltracer import CallTracer, DFMT, RichPyTraceHandler
 
-# Basic logging configuration (can be done once)
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%H:%M:%S",
-)
+# 1. Configure a logger to use the Rich handler exclusively
+log = logging.getLogger("rich_demo")
+log.setLevel(logging.DEBUG)
+log.handlers = [RichPyTraceHandler(overwrite=False)] # `overwrite=False` for append-only tree
+log.propagate = False
 
-# Create an instance of the ASYNCHRONOUS tracer
-async_trace = aCallTracer(level=logging.DEBUG)
+# 2. Configure the tracer to output JSON for the handler to consume
+trace = CallTracer(logger=log, output="json", timing="Mh")
 
-class AsyncDataFetcher:
-    @async_trace
-    async def process_item(self, item_id: str, delay: float):
-        await asyncio.sleep(delay)
-        return f"Processed {item_id}"
+@trace
+def fib(n):
+    if n <= 1:
+        return n
+    return fib(n-1) + fib(n-2)
 
-async def main():
-    fetcher = AsyncDataFetcher()
-    print("\n--- Running two tasks concurrently to show task-safety ---")
-    results = await asyncio.gather(
-        fetcher.process_item(item_id="A", delay=0.2),
-        fetcher.process_item(item_id="B", delay=0.1),
-    )
-    logging.info("Concurrent results: %s", results)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+fib(5)
 ```
 
-### Example Output (Async)
+**Output:**
 
-Note how the logs from Task A and B are interleaved, but the indentation remains correct for each independent task.
+![Rich Tree Output](http://googleusercontent.com/file_content/52)
 
-```
---- Running two tasks concurrently to show task-safety ---
-22:01:05 - calltracer.async_tracer - DEBUG - --> Calling AsyncDataFetcher.process_item(<...>, item_id='A', delay=0.2)
-22:01:05 - calltracer.async_tracer - DEBUG - --> Calling AsyncDataFetcher.process_item(<...>, item_id='B', delay=0.1)
-22:01:05 - calltracer.async_tracer - DEBUG - <-- Exiting AsyncDataFetcher.process_item, returned: 'Processed B'
-22:01:05 - calltracer.async_tracer - DEBUG - <-- Exiting AsyncDataFetcher.process_item, returned: 'Processed A'
-22:01:05 - root - INFO - Concurrent results: ['Processed A', 'Processed B']
-```
+#### Call Chain Tracing (`trace_chain`)
 
-***
-
-## API Reference
-
-### `CallTracer` Class (Synchronous)
-
-A factory for creating decorators that trace synchronous (`def`) function/method calls.
-
-#### Initialization
+Set `trace_chain=True` to see the full context for every call.
 
 ```python
-from calltracer import CallTracer
-trace = CallTracer(level=logging.INFO)
+trace_with_chain = CallTracer(trace_chain=True)
 ```
 
-### `aCallTracer` Class (Asynchronous)
+**Output:**
 
-A factory for creating decorators that trace asynchronous (`async def`) function/method calls. This tracer is task-safe for concurrent code using `contextvars`.
+![Trace Chain Output](http://googleusercontent.com/file_content/53)
 
-#### Initialization
+#### Performance Profiling (`timing`)
+
+Measure performance using different clocks. Use **lowercase** for inclusive time and **uppercase** for exclusive time.
 
 ```python
-from calltracer import aCallTracer
-async_trace = aCallTracer(level=logging.INFO)
+# M: Exclusive monotonic time, h: Inclusive perf_counter time
+profile_trace = CallTracer(timing="Mh", timing_fmt=DFMT.SINGLE)
 ```
 
-**Parameters for both classes:**
+#### IDE & Terminal Integration
 
--   **`level`** (`int`, optional): The logging level for trace messages. Defaults to `logging.DEBUG`.
--   **`trace_chain`** (`bool`, optional): If True, accumulates and logs the call chain. Default to False.
--   **`logger`** (`logging.Logger`, optional): The logger instance to use. Defaults to the internal module logger.
+Make your logs clickable! `ide_support` creates links for IDEs, while `term_support` uses OSC 8 for modern terminals.
+
+```python
+# For clickable links in PyCharm/VSCode
+ide_trace = CallTracer(ide_support=True)
+
+# For Ctrl/Cmd-Click in iTerm2 and other modern terminals
+term_trace = CallTracer(term_support=True)
+```
+
+**Output in iTerm2 (with `term_support=True`):** The function signature becomes a clickable link that opens the file at the correct line in your editor.
+
+#### Asynchronous Tracing
+
+`aCallTracer` handles `async` functions and concurrency flawlessly, keeping call chains isolated.
+
+**Output:**
+
+![Async Tracing Output](http://googleusercontent.com/file_content/54)
+
+---
+
+## Full API Reference
+
+The `CallTracer` and `aCallTracer` classes share the same rich set of initialization parameters, inherited from a base class.
+
+### `CallTracer` / `aCallTracer` Parameters
+
+```python
+__init__(self,
+         level=logging.DEBUG,
+         trace_chain=False,
+         logger=None,
+         transform=None,
+         max_argval_len=None,
+         return_transform: Optional[Callable] = None,
+         max_return_len: Optional[int] = None,
+         condition: Optional[Callable] = None,
+         timing: str = None,
+         timing_fmt: DFMT = DFMT.SINGLE,
+         output: str = 'text',
+         ide_support: bool = False,
+         term_support: bool = False,
+         rel_path: bool = True)
+```
+
+-   **`level`** (`int`): The logging level for trace messages.
+-   **`trace_chain`** (`bool`): If `True`, logs the full call chain for each event.
+-   **`logger`** (`logging.Logger`): A custom logger instance to use.
+-   **`transform`** (`dict`): A dictionary of callbacks to transform/hide argument values. Keys are `(func_qualname, arg_name)` tuples. A wildcard `('*', arg_name)` can be used. If a callback returns `None`, only the argument name is printed.
+-   **`max_argval_len`** (`int`): Maximum length for the string representation of argument values.
+-   **`return_transform`** (`Callable`): A function to transform the return value before logging.
+-   **`max_return_len`** (`int`): Maximum length for the string representation of the return value.
+-   **`condition`** (`Callable`): A function `(func_name, *args, **kwargs) -> bool` that determines if tracing should be active for a call. If it returns `False`, this call and all nested calls are skipped.
+-   **`timing`** (`str`): Enables [poor mens'] profiling. A string of characters specifying clocks to use (`m`onotonic, `h`igh-perf, `c`pu, `t`hread). **Lowercase** measures inclusive (total) time. **Uppercase** measures exclusive time (total time minus decorated child calls).
+-   **`timing_fmt`** (`DFMT`): The display format for timing values (`DFMT.NANO`, `DFMT.MICRO`, `DFMT.SEC`, `DFMT.SINGLE`, `DFMT.HUMAN`). See docstrings for details.
+-   **`output`** (`str`): The output format. `'text'` (default) for human-readable logs or `'json'` for structured logging.
+-   **`ide_support`** (`bool`): If `True`, formats text logs to be clickable in IDEs (e.g., PyCharm, VSCode).
+-   **`term_support`** (`bool`): If `True`, formats text logs with OSC 8 hyperlinks for modern terminals.
+-   **`rel_path`** (`bool`): If `True`, uses relative paths for `ide_support` and `term_support`.
+
+Methods:
+-   **`enable()` / `disable()`**: Each tracer instance has these methods to control tracing at runtime.
+
+### `RichPyTraceHandler` Parameters
+
+The handler for beautiful `rich` tree output.
+
+```python
+__init__(self,
+         overwrite: bool = False,
+         color_enter: str = "green",
+         color_exit: str = "bold blue",
+         color_exception: str = "bold red",
+         color_timing: str = "yellow")
+```
+-   **`overwrite`** (`bool`): If `False` (default), creates an append-only tree showing both enter and exit events. If `True`, uses a `Live` animated display to overwrite enter nodes with exit information.
+-   **`color_*`** (`str`): Rich markup strings to customize the output colors.
 
 ### `stack()` Function
-
-Logs the current call stack to the specified logger. This function works in both synchronous and asynchronous code.
-
-#### Signature
 
 ```python
 stack(level=logging.DEBUG, logger=None, limit=None, start=0)
 ```
+Logs the current call stack.
 
--   **`level`** (`int`, optional): The logging level for the message. Defaults to `logging.DEBUG`.
--   **`logger`** (`logging.Logger`, optional): The logger instance to use. Defaults to the internal module logger.
--   **`limit`** (`int`, optional): The maximum number of frames to display. Defaults to `None` (all frames).
--   **`start`** (`int`, optional): The offset of the first frame to display. Defaults to `0`.
+-   **`level`** (`int`): The logging level for the stack trace message.
+-   **`logger`** (`logging.Logger`): The logger to use.
+-   **`limit`** (`int`): Maximum number of frames to show.
+-   **`start`** (`int`): Frame offset to start from.
