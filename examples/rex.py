@@ -3,9 +3,10 @@
 A clear and simple example of using pytracecall with the RichPyTraceHandler.
 """
 
-import time
 import logging
-from calltracer import CallTracer, DFMT, RichPyTraceHandler
+import time
+
+from calltracer import DFMT, CallTracer, RichPyTraceHandler
 
 # --- 1. Logger and Handler Setup ---
 # We set up the logger once. We will swap out the handler to demo both modes.
@@ -20,12 +21,7 @@ overwrite_handler = RichPyTraceHandler(overwrite=True)
 
 # --- 2. Tracer Configuration ---
 # We only need one tracer instance. The display mode is controlled by the handler.
-trace = CallTracer(
-    logger=log,
-    output="json",
-    timing="Mh",
-    timing_fmt=DFMT.SINGLE
-)
+trace = CallTracer(logger=log, output="json", timing="Mh", timing_fmt=DFMT.SINGLE)
 
 
 # --- 3. Function Definition ---
@@ -45,7 +41,7 @@ def shurumburum(n: int, m: int, d: float = 0.0) -> int:
         case 0:
             return shurumburum(n / 2, m - 1, d)
         case 1:
-            return shurumburum(m - (m % 2), n * 2, d) + shurumburum(n+1, m//2, d)
+            return shurumburum(m - (m % 2), n * 2, d) + shurumburum(n + 1, m // 2, d)
 
 
 # --- 4. Main Execution Block ---

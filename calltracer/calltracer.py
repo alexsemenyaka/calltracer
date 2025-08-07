@@ -2,65 +2,67 @@
 calltracer: A debugging module with a decorator (CallTracer) for
 tracing function calls and a function (stack) for logging the current call stack.
 """
-import os
-import time
-import math
-import json
-import asyncio
+
+import contextvars
 import functools
 import inspect
+import json
 import logging
-import contextvars
-from enum import Enum, auto
+import os
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Optional, Callable
+from enum import Enum, auto
+from typing import Callable, Optional
 
 # Define a logger for the entire module.
 tracer_logger = logging.getLogger(__name__)
 
 # A single context variable will hold the list of calls (the chain).
 # It works safely for both sync and async code.
-tracer_chain = contextvars.ContextVar('tracer_chain', default=[])
+tracer_chain = contextvars.ContextVar("tracer_chain", default=[])
 
 # A context var to control whether tracing is enabled for the current call stack.
-tracing_enabled_context = contextvars.ContextVar('tracing_enabled', default=True)
+tracing_enabled_context = contextvars.ContextVar("tracing_enabled", default=True)
 
 # Accum for the daughter functions exec time
 sub_duration_aggregator = contextvars.ContextVar(
-    'sub_duration_aggregator', 
-    default=defaultdict(int)
+    "sub_duration_aggregator", default=defaultdict(int)
 )
 
 
 ### USEFUL CONSTANTS
 
 # Constants for time conversion for better readability
-_NS_IN_US = 1_000.0  # наносекунд в микросекунде
-_NS_IN_MS = 1_000_000.0  # наносекунд в миллисекунде
-_NS_IN_SEC = 1_000_000_000.0  # наносекунд в секунде
+_NS_IN_US = 1_000.0
+_NS_IN_MS = 1_000_000.0
+_NS_IN_SEC = 1_000_000_000.0
 _NS_IN_MIN = 60 * _NS_IN_SEC
 _NS_IN_HR = 60 * _NS_IN_MIN
 
+
 class DFMT(Enum):
     """Defines the formatting style for time duration."""
+
     NANO = auto()
     MICRO = auto()
     SEC = auto()
     SINGLE = auto()
     HUMAN = auto()
 
+
 _TIMERS = {
-    'm': time.monotonic_ns,
-    'h': time.perf_counter_ns,
-    'c': time.process_time_ns,
-    't': time.thread_time_ns,
+    "m": time.monotonic_ns,
+    "h": time.perf_counter_ns,
+    "c": time.process_time_ns,
+    "t": time.thread_time_ns,
 }
 
 _TIMING_BLOCK_WIDTH = 50
 
 
 ### AUXILIARY FUNCTIONS
+
 
 def _readable_duration(duration: int, fmt: DFMT) -> str:
     """
@@ -116,7 +118,10 @@ def _readable_duration(duration: int, fmt: DFMT) -> str:
     # Fallback for any unknown format
     raise ValueError(f"Unknown duration format: {fmt}")
 
-def _get_timing_block(inclusive_durs: dict, exclusive_durs: dict, timing_str: str, fmt: DFMT) -> str:
+
+def _get_timing_block(
+    inclusive_durs: dict, exclusive_durs: dict, timing_str: str, fmt: DFMT
+) -> str:
     """
     Generates a formatted block of execution times, choosing between
     inclusive and exclusive times based on the case of the timing character.
@@ -143,6 +148,7 @@ def _get_timing_block(inclusive_durs: dict, exclusive_durs: dict, timing_str: st
     unpadded_block = f"[{' | '.join(parts)}]"
     return f"{unpadded_block:<{_TIMING_BLOCK_WIDTH}}"
 
+
 def _get_arg_str(func, args, kwargs, tracer_instance):
     """
     Helper function to generate a string representation of function arguments.
@@ -156,12 +162,14 @@ def _get_arg_str(func, args, kwargs, tracer_instance):
         processed_args = []
         for name, value in bound_args.arguments.items():
             transform_key = (func_name, name)
-            universal_transform_key = ('*', name)
+            universal_transform_key = ("*", name)
             # Use tracer_instance to access the configuration
             if transform_key in tracer_instance.transform:
                 display_value = tracer_instance.transform[transform_key](value)
             elif universal_transform_key in tracer_instance.transform:
-                display_value = tracer_instance.transform[universal_transform_key](value)
+                display_value = tracer_instance.transform[universal_transform_key](
+                    value
+                )
             else:
                 display_value = value
 
@@ -170,8 +178,11 @@ def _get_arg_str(func, args, kwargs, tracer_instance):
                     val_str = "..."
                 else:
                     val_str = repr(display_value)
-                    if tracer_instance.max_argval_len and len(val_str) > tracer_instance.max_argval_len:
-                        val_str = val_str[:tracer_instance.max_argval_len] + "..."
+                    if (
+                        tracer_instance.max_argval_len and
+                        len(val_str) > tracer_instance.max_argval_len
+                    ):
+                        val_str = val_str[: tracer_instance.max_argval_len] + "..."
                 processed_args.append(f"{name}={val_str}")
             else:
                 processed_args.append(f"{name}")
@@ -179,9 +190,12 @@ def _get_arg_str(func, args, kwargs, tracer_instance):
         arg_str = ", ".join(processed_args)
 
     except (ValueError, TypeError):  # pragma: no cover
-        arg_str = ", ".join([repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()])
+        arg_str = ", ".join(
+            [repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()]
+        )
 
     return arg_str
+
 
 def _log_trace_event(tracer, event_type: str, data: dict):
     """Builds a data record and logs it as either text or JSON."""
@@ -189,57 +203,83 @@ def _log_trace_event(tracer, event_type: str, data: dict):
     base_record = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "event": event_type,
-        **data
+        **data,
     }
 
-    if tracer.output == 'json':
+    if tracer.output == "json":
         log_string = json.dumps(base_record)
-    else: # 'text' format
+    else:  # 'text' format
         timing_block = data.get("timing_block", "")
         indent = data.get("indent", "")
         current_call_sig = data.get("current_call_sig", "")
 
         if data.get("ide") or data.get("osc8"):
             filename = data.get("filename")
-            lineno   = data.get("lineno")
+            lineno = data.get("lineno")
             if data.get("ide"):
                 output = f'File "{filename}", line {data.get("lineno")}, in {current_call_sig}'
             else:
-                output = f'\033]8;;file://{filename}#{lineno}\033\\{current_call_sig}\033]8;;\033\\'
+                output = f"\033]8;;file://{filename}#{lineno}\033\\{current_call_sig}\033]8;;\033\\"
         else:
-            output = f'Calling {current_call_sig}' if event_type == 'enter' else f'Exiting {current_call_sig}'
+            output = (
+                f"Calling {current_call_sig}"
+                if event_type == "enter"
+                else f"Exiting {current_call_sig}"
+            )
 
-        if event_type == 'enter':
+        if event_type == "enter":
             log_string = f"{indent}--> {output}"
             if tracer.trace_chain and data.get("chain"):
                 chain_str = " <== ".join(reversed(data["chain"]))
                 log_string += f"  <== {chain_str}"
 
-        elif event_type == 'exit':
-            display_result = repr(tracer.return_transform(data["result"]) if tracer.return_transform else data["result"])
+        elif event_type == "exit":
+            display_result = repr(
+                tracer.return_transform(data["result"])
+                if tracer.return_transform
+                else data["result"]
+            )
 
-            if tracer.max_return_len is not None and len(display_result) > tracer.max_return_len:
-                display_result = display_result[:tracer.max_return_len] + "..."
+            if (
+                tracer.max_return_len is not None
+                and len(display_result) > tracer.max_return_len
+            ):
+                display_result = display_result[: tracer.max_return_len] + "..."
 
-            log_string = f"{timing_block}{indent}<-- {output}, returned: {display_result}"
+            log_string = (
+                f"{timing_block}{indent}<-- {output}, returned: {display_result}"
+            )
 
-        elif event_type == 'exception':
+        elif event_type == "exception":
             log_string = f"{timing_block}{indent}<!> {output} with exception: {repr(data['exception'])}"
 
-    level = logging.WARNING if event_type == 'exception' else tracer.level
+    level = logging.WARNING if event_type == "exception" else tracer.level
     tracer.logger.log(level, log_string)
 
 
 ### OUR CLASSES
 
+
 class _BaseTracer:
     """A common base class to hold shared initialization logic."""
-    def __init__(self, level=logging.DEBUG, trace_chain=False, logger=None,
-                 transform=None, max_argval_len=None,
-                 return_transform: Optional[Callable] = None, max_return_len=None,
-                 condition: Optional[Callable] = None, timing: str = None, timing_fmt: DFMT = DFMT.SINGLE,
-                 output: str = 'text', ide_support: bool = False, term_support: bool = False,
-                 rel_path: bool = True):
+
+    def __init__(
+        self,
+        level=logging.DEBUG,
+        trace_chain=False,
+        logger=None,
+        transform=None,
+        max_argval_len=None,
+        return_transform: Optional[Callable] = None,
+        max_return_len=None,
+        condition: Optional[Callable] = None,
+        timing: str = None,
+        timing_fmt: DFMT = DFMT.SINGLE,
+        output: str = "text",
+        ide_support: bool = False,
+        term_support: bool = False,
+        rel_path: bool = True,
+    ):
         """
         Initializes the factory.
 
@@ -321,23 +361,23 @@ class _BaseTracer:
                 are True, uses relative path for filename, othervise absolute.
                 Defaults to True
         """
-        self.level            = level
-        self.trace_chain      = trace_chain
-        self.logger           = logger or logging.getLogger(__name__)
-        self.transform        = transform or {}
-        self.max_argval_len   = max_argval_len
+        self.level = level
+        self.trace_chain = trace_chain
+        self.logger = logger or logging.getLogger(__name__)
+        self.transform = transform or {}
+        self.max_argval_len = max_argval_len
         self.return_transform = return_transform
-        self.max_return_len   = max_return_len
-        self.condition        = condition
-        self.output           = output
-        self.enabled          = True
-        self.ide_support      = ide_support
-        self.term_support     = term_support
-        self.rel_path         = rel_path
+        self.max_return_len = max_return_len
+        self.condition = condition
+        self.output = output
+        self.enabled = True
+        self.ide_support = ide_support
+        self.term_support = term_support
+        self.rel_path = rel_path
 
-        self.timing_funcs     = []
-        self.timing           = timing
-        self.timing_fmt       = timing_fmt
+        self.timing_funcs = []
+        self.timing = timing
+        self.timing_fmt = timing_fmt
         if self.timing:
             for char in self.timing.lower():
                 if char in _TIMERS:
@@ -350,7 +390,7 @@ class _BaseTracer:
     def disable(self):
         """Disables tracing for this decorator instance."""
         self.enabled = False
- 
+
 
 class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
     """A factory for creating decorators that trace SYNCHRONOUS function/method calls.
@@ -383,7 +423,11 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
             if not tracing_enabled_context.get() or not self.enabled:
                 return func(*args, **kwargs)
 
-            should_run_tracer = self.condition(func.__qualname__, *args, **kwargs) if self.condition else True
+            should_run_tracer = (
+                self.condition(func.__qualname__, *args, **kwargs)
+                if self.condition
+                else True
+            )
             token_enabled = tracing_enabled_context.set(should_run_tracer)
 
             if not should_run_tracer:
@@ -393,31 +437,52 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                     tracing_enabled_context.reset(token_enabled)
 
             chain = tracer_chain.get()
-            indent = '    ' * len(chain)
+            indent = "    " * len(chain)
             arg_str = _get_arg_str(func, args, kwargs, self)
             current_call_sig = f"{func.__qualname__}({arg_str})"
-            if (self.ide_support or self.term_support) and self.output == 'text':
+            if (self.ide_support or self.term_support) and self.output == "text":
                 filename = inspect.getfile(func)
-                filename = os.path.relpath(filename) if self.rel_path else os.path.abspath(filename)
+                filename = (
+                    os.path.relpath(filename)
+                    if self.rel_path
+                    else os.path.abspath(filename)
+                )
                 try:
-                    lineno = inspect.getsourcelines(func)[1] + 1  ## lineno is the decorator's line :)
+                    lineno = (
+                        inspect.getsourcelines(func)[1] + 1
+                    )  # lineno is the decorator's line :)
                 except OSError:
-                    lineno = 'undef'
+                    lineno = "undef"
             else:
                 filename = None
                 lineno = None
 
-            _log_trace_event(self, 'enter', {
-                "indent": indent, "current_call_sig": current_call_sig, "chain": chain,
-                "filename": filename, "lineno": lineno, "ide": self.ide_support, "osc8": self.term_support,
-                "ide": self.ide_support, "osc8": self.term_support,
-            })
+            _log_trace_event(
+                self,
+                "enter",
+                {
+                    "indent": indent,
+                    "current_call_sig": current_call_sig,
+                    "chain": chain,
+                    "filename": filename,
+                    "lineno": lineno,
+                    "ide": self.ide_support,
+                    "osc8": self.term_support,
+                },
+            )
 
             exc = None
             token_chain = tracer_chain.set(chain + [current_call_sig])
             parent_aggregator = sub_duration_aggregator.get()
             token_agg = sub_duration_aggregator.set(defaultdict(int))
-            start_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
+            start_times = (
+                {
+                    char: timer()
+                    for char, timer in zip(self.timing.lower(), self.timing_funcs)
+                }
+                if self.timing
+                else {}
+            )
 
             try:
                 result = func(*args, **kwargs)
@@ -428,37 +493,56 @@ class CallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                 # everyting is in finally!
                 raise
             finally:
-                end_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
+                end_times = (
+                    {
+                        char: timer()
+                        for char, timer in zip(self.timing.lower(), self.timing_funcs)
+                    }
+                    if self.timing
+                    else {}
+                )
                 children_aggregator = sub_duration_aggregator.get()
                 inclusive_durs, exclusive_durs = {}, {}
                 if self.timing:
                     for char in self.timing.lower():
                         total_duration = end_times[char] - start_times[char]
                         inclusive_durs[char] = total_duration
-                        exclusive_durs[char] = total_duration - children_aggregator[char]
+                        exclusive_durs[char] = (
+                            total_duration - children_aggregator[char]
+                        )
                         parent_aggregator[char] += total_duration
 
                 sub_duration_aggregator.reset(token_agg)
-                timing_block = _get_timing_block(inclusive_durs, exclusive_durs, self.timing, self.timing_fmt)
+                timing_block = _get_timing_block(
+                    inclusive_durs, exclusive_durs, self.timing, self.timing_fmt
+                )
 
                 log_data = {
-                    "indent": indent, "current_call_sig": current_call_sig,
-                    "timing_block": timing_block, "timings_ns": {"inclusive": inclusive_durs, "exclusive": exclusive_durs},
-                    "filename": filename, "lineno": lineno,
-                    "ide": self.ide_support, "osc8": self.term_support,
+                    "indent": indent,
+                    "current_call_sig": current_call_sig,
+                    "timing_block": timing_block,
+                    "timings_ns": {
+                        "inclusive": inclusive_durs,
+                        "exclusive": exclusive_durs,
+                    },
+                    "filename": filename,
+                    "lineno": lineno,
+                    "ide": self.ide_support,
+                    "osc8": self.term_support,
                 }
 
                 if exc is None:
                     log_data["result"] = result
-                    _log_trace_event(self, 'exit', log_data)
+                    _log_trace_event(self, "exit", log_data)
                 else:
                     log_data["exception"] = exc
-                    _log_trace_event(self, 'exception', log_data)
+                    _log_trace_event(self, "exception", log_data)
 
                 tracer_chain.reset(token_chain)
                 tracing_enabled_context.reset(token_enabled)
 
         return sync_wrapper
+
 
 class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
     """A factory for creating decorators that trace ASYNCHRONOUS function calls."""
@@ -480,7 +564,11 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
             if not tracing_enabled_context.get() or not self.enabled:
                 return await func(*args, **kwargs)
 
-            should_run_tracer = self.condition(func.__qualname__, *args, **kwargs) if self.condition else True
+            should_run_tracer = (
+                self.condition(func.__qualname__, *args, **kwargs)
+                if self.condition
+                else True
+            )
             token_enabled = tracing_enabled_context.set(should_run_tracer)
 
             if not should_run_tracer:
@@ -490,29 +578,48 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                     tracing_enabled_context.reset(token_enabled)
 
             chain = tracer_chain.get()
-            indent = '    ' * len(chain)
+            indent = "    " * len(chain)
             arg_str = _get_arg_str(func, args, kwargs, self)
             current_call_sig = f"{func.__qualname__}({arg_str})"
 
-            if (self.ide_support or self.term_support) and self.output == 'text':
+            if (self.ide_support or self.term_support) and self.output == "text":
                 filename = inspect.getfile(func)
-                filename = os.path.relpath(filename) if self.rel_path else os.path.abspath(filename)
+                filename = (
+                    os.path.relpath(filename)
+                    if self.rel_path
+                    else os.path.abspath(filename)
+                )
                 lineno = inspect.getsourcelines(func)[1]
             else:
                 filename = None
                 lineno = None
 
-            _log_trace_event(self, 'enter', {
-                "indent": indent, "current_call_sig": current_call_sig, "chain": chain,
-                "filename": filename, "lineno": lineno,
-                "ide": self.ide_support, "osc8": self.term_support,
-            })
+            _log_trace_event(
+                self,
+                "enter",
+                {
+                    "indent": indent,
+                    "current_call_sig": current_call_sig,
+                    "chain": chain,
+                    "filename": filename,
+                    "lineno": lineno,
+                    "ide": self.ide_support,
+                    "osc8": self.term_support,
+                },
+            )
 
             exc = None
             token_chain = tracer_chain.set(chain + [current_call_sig])
             parent_aggregator = sub_duration_aggregator.get()
             token_agg = sub_duration_aggregator.set(defaultdict(int))
-            start_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
+            start_times = (
+                {
+                    char: timer()
+                    for char, timer in zip(self.timing.lower(), self.timing_funcs)
+                }
+                if self.timing
+                else {}
+            )
 
             try:
                 result = await func(*args, **kwargs)
@@ -523,32 +630,50 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
                 # everyting is in finally!
                 raise
             finally:
-                end_times = {char: timer() for char, timer in zip(self.timing.lower(), self.timing_funcs)} if self.timing else {}
+                end_times = (
+                    {
+                        char: timer()
+                        for char, timer in zip(self.timing.lower(), self.timing_funcs)
+                    }
+                    if self.timing
+                    else {}
+                )
                 children_aggregator = sub_duration_aggregator.get()
                 inclusive_durs, exclusive_durs = {}, {}
                 if self.timing:
                     for char in self.timing.lower():
                         total_duration = end_times[char] - start_times[char]
                         inclusive_durs[char] = total_duration
-                        exclusive_durs[char] = total_duration - children_aggregator[char]
+                        exclusive_durs[char] = (
+                            total_duration - children_aggregator[char]
+                        )
                         parent_aggregator[char] += total_duration
 
                 sub_duration_aggregator.reset(token_agg)
-                timing_block = _get_timing_block(inclusive_durs, exclusive_durs, self.timing, self.timing_fmt)
+                timing_block = _get_timing_block(
+                    inclusive_durs, exclusive_durs, self.timing, self.timing_fmt
+                )
 
                 log_data = {
-                    "indent": indent, "current_call_sig": current_call_sig,
-                    "timing_block": timing_block, "timings_ns": {"inclusive": inclusive_durs, "exclusive": exclusive_durs},
-                    "filename": filename, "lineno": lineno,
-                    "ide": self.ide_support, "osc8": self.term_support,
+                    "indent": indent,
+                    "current_call_sig": current_call_sig,
+                    "timing_block": timing_block,
+                    "timings_ns": {
+                        "inclusive": inclusive_durs,
+                        "exclusive": exclusive_durs,
+                    },
+                    "filename": filename,
+                    "lineno": lineno,
+                    "ide": self.ide_support,
+                    "osc8": self.term_support,
                 }
 
                 if exc is None:
                     log_data["result"] = result
-                    _log_trace_event(self, 'exit', log_data)
+                    _log_trace_event(self, "exit", log_data)
                 else:
                     log_data["exception"] = exc
-                    _log_trace_event(self, 'exception', log_data)
+                    _log_trace_event(self, "exception", log_data)
 
                 tracer_chain.reset(token_chain)
                 tracing_enabled_context.reset(token_enabled)
@@ -556,10 +681,11 @@ class aCallTracer(_BaseTracer):  # pylint: disable=too-few-public-methods
         return async_wrapper
 
 
-no_self = {('*', 'self'): (lambda _:None)}
+no_self = {("*", "self"): (lambda _: None)}
 
 
 ### OUR FUNCTION
+
 
 def stack(level=logging.DEBUG, logger=tracer_logger, limit=None, start=0):
     """Logs the current call stack to the specified logger.

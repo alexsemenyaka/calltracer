@@ -5,7 +5,7 @@ Examples for the calltracer module
 
 import logging
 
-from calltracer import CallTracer, stack, no_self
+from calltracer import CallTracer, no_self, stack
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -15,10 +15,17 @@ logging.basicConfig(
 
 trace = CallTracer(level=logging.DEBUG)
 chtrace = CallTracer(level=logging.DEBUG, trace_chain=True, transform=no_self)
-tchtrace = CallTracer(level=logging.DEBUG, trace_chain=True, transform=no_self, timing='chm')
-techtrace = CallTracer(level=logging.DEBUG, trace_chain=True, transform=no_self, timing='CHM')
+tchtrace = CallTracer(
+    level=logging.DEBUG, trace_chain=True, transform=no_self, timing="chm"
+)
+techtrace = CallTracer(
+    level=logging.DEBUG, trace_chain=True, transform=no_self, timing="CHM"
+)
 idetrace = CallTracer(level=logging.DEBUG, trace_chain=True, ide_support=True)
-termtrace = CallTracer(level=logging.DEBUG, trace_chain=True, term_support=True, rel_path=False)
+termtrace = CallTracer(
+    level=logging.DEBUG, trace_chain=True, term_support=True, rel_path=False
+)
+
 
 class AdvancedCalculator:  # pylint: disable=too-few-public-methods
     """A calculator to demonstrate tracing."""
@@ -40,6 +47,7 @@ class AdvancedCalculator:  # pylint: disable=too-few-public-methods
             return 1
         return n * self.factorial(n - 1)
 
+
 class SecondAdvancedCalculator:  # pylint: disable=too-few-public-methods
     """A copy of the calculator to demonstrate tracing with chaining"""
 
@@ -59,6 +67,7 @@ class SecondAdvancedCalculator:  # pylint: disable=too-few-public-methods
         if n == 0:
             return 1
         return n * self.factorial(n - 1)
+
 
 class ThirdAdvancedCalculator:  # pylint: disable=too-few-public-methods
     """Another copy of the calculator to demonstrate tracing with chaining and profiling times"""
@@ -80,6 +89,7 @@ class ThirdAdvancedCalculator:  # pylint: disable=too-few-public-methods
             return 1
         return n * self.factorial(n - 1)
 
+
 class FourthAdvancedCalculator:  # pylint: disable=too-few-public-methods
     """And another copy of the calculator to demonstrate tracing with chaining and profiling times"""
 
@@ -100,30 +110,47 @@ class FourthAdvancedCalculator:  # pylint: disable=too-few-public-methods
             return 1
         return n * self.factorial(n - 1)
 
+
 @techtrace
 def factorial_function(i: int) -> int:
     match i:
-        case 0: return 1
-        case 1: return 1
-        case 2: return 2
-        case _: return i*factorial_function(i-1)
+        case 0:
+            return 1
+        case 1:
+            return 1
+        case 2:
+            return 2
+        case _:
+            return i * factorial_function(i - 1)
+
 
 @idetrace
 def divide_function(i: int) -> int:
     match i:
-        case 0: return 1
-        case 1: return 1
-        case 2: return 2
-        case _: return divide_function(i//2+1)
+        case 0:
+            return 1
+        case 1:
+            return 1
+        case 2:
+            return 2
+        case _:
+            return divide_function(i // 2 + 1)
+
 
 @termtrace
 def fib_function(i: int) -> int:
     match i:
-        case 0: return 1
-        case 1: return 1
-        case 2: return 2
-        case 3: return 5
-        case _: return fib_function(i-1) + fib_function(i-2)
+        case 0:
+            return 1
+        case 1:
+            return 1
+        case 2:
+            return 2
+        case 3:
+            return 5
+        case _:
+            return fib_function(i - 1) + fib_function(i - 2)
+
 
 calc = AdvancedCalculator("MyCalc")
 logging.info("--- Starting recursive call with stack dump ---")
@@ -134,18 +161,26 @@ logging.info("--- Starting recursive call with stack dump and chained tracing---
 calc.factorial(4)
 
 calc = ThirdAdvancedCalculator("MyCalc3")
-logging.info("--- Starting recursive call with stack dump, chained tracing and profiling times---")
+logging.info(
+    "--- Starting recursive call with stack dump, chained tracing and profiling times---"
+)
 calc.factorial(4)
 
 calc = FourthAdvancedCalculator("MyCalc4")
-logging.info("--- Starting recursive call with stack dump, chained tracing and exclusive profiling times---")
+logging.info(
+    "--- Starting recursive call with stack dump, chained tracing and exclusive profiling times---"
+)
 calc.factorial(4)
 
-logging.info("--- Starting recursive simple function call with chained tracing and exclusive profiling times---")
+logging.info(
+    "--- Starting recursive simple function call with chained tracing and exclusive profiling times---"
+)
 factorial_function(6)
 
 logging.info("--- Starting recursive simple function call with IDE support---")
 divide_function(100)
 
-logging.info("--- Starting recursive simple function call with OSC8 support by terminal---")
+logging.info(
+    "--- Starting recursive simple function call with OSC8 support by terminal---"
+)
 fib_function(7)

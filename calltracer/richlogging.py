@@ -3,13 +3,14 @@
 import json
 import logging
 import threading
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 try:
     from rich.console import Console
     from rich.live import Live
     from rich.text import Text
     from rich.tree import Tree
+
     RICH_INSTALLED = True
 except ImportError:
     RICH_INSTALLED = False
@@ -26,12 +27,17 @@ class RichPyTraceHandler(logging.Handler):
     A logging handler that renders pytracecall events as a rich Tree.
     Requires the 'rich' extra to be installed (`pip install pytracecall[rich]`).
     """
-    def __init__(self, overwrite: bool = False,
-                 color_enter: str = "green",
-                 color_exit: str = "bold blue",
-                 color_exception: str = "bold red",
-                 color_timing: str = "yellow",
-                 *args, **kwargs):
+
+    def __init__(
+        self,
+        overwrite: bool = False,
+        color_enter: str = "green",
+        color_exit: str = "bold blue",
+        color_exception: str = "bold red",
+        color_timing: str = "yellow",
+        *args,
+        **kwargs,
+    ):
         """
         Initializes the handler.
 
@@ -82,13 +88,15 @@ class RichPyTraceHandler(logging.Handler):
 
         if thread_id not in _thread_contexts:
             tree = Tree("", hide_root=True)
-            _thread_contexts[thread_id] = (tree, []) # State: (tree_root, node_stack)
+            _thread_contexts[thread_id] = (tree, [])  # State: (tree_root, node_stack)
 
         tree_root, node_stack = _thread_contexts[thread_id]
 
         if event == "enter":
             parent_node = node_stack[-1] if node_stack else tree_root
-            markup = f"[{self.color_enter}]➡️ {data['current_call_sig']}[/{self.color_enter}]"
+            markup = (
+                f"[{self.color_enter}]➡️ {data['current_call_sig']}[/{self.color_enter}]"
+            )
             new_node = parent_node.add(Text.from_markup(markup))
             node_stack.append(new_node)
 
@@ -99,12 +107,14 @@ class RichPyTraceHandler(logging.Handler):
 
             timing_block = data.get("timing_block", "").strip()
             if timing_block:
-                timing_block = f" [{self.color_timing}]({timing_block})[/{self.color_timing}]"
+                timing_block = (
+                    f" [{self.color_timing}]({timing_block})[/{self.color_timing}]"
+                )
 
             if event == "exit":
                 result_repr = repr(data["result"])
                 markup = f"[{self.color_exit}]⬅️ returned: {result_repr}[/{self.color_exit}]{timing_block}"
-            else: # exception
+            else:  # exception
                 exc_repr = repr(data["exception"])
                 markup = f"[{self.color_exception}]💥 raised: {exc_repr}[/{self.color_exception}]{timing_block}"
 
@@ -123,29 +133,34 @@ class RichPyTraceHandler(logging.Handler):
             tree = Tree("", hide_root=True)
             live = Live(tree, console=self.console, auto_refresh=False, transient=False)
             live.start(refresh=True)
-            _thread_contexts[thread_id] = (live, tree, []) # State: (live, tree, stack)
+            _thread_contexts[thread_id] = (live, tree, [])  # State: (live, tree, stack)
 
         live, tree_root, node_stack = _thread_contexts[thread_id]
 
         if event == "enter":
             parent_node = node_stack[-1] if node_stack else tree_root
-            markup = f"[{self.color_enter}]➡️ {data['current_call_sig']}[/{self.color_enter}]"
+            markup = (
+                f"[{self.color_enter}]➡️ {data['current_call_sig']}[/{self.color_enter}]"
+            )
             new_node = parent_node.add(Text.from_markup(markup))
             node_stack.append(new_node)
             live.refresh()
 
         elif event in ("exit", "exception"):
-            if not node_stack: return
+            if not node_stack:
+                return
             current_node = node_stack.pop()
 
             timing_block = data.get("timing_block", "").strip()
             if timing_block:
-                timing_block = f" [{self.color_timing}]({timing_block})[/{self.color_timing}]"
+                timing_block = (
+                    f" [{self.color_timing}]({timing_block})[/{self.color_timing}]"
+                )
 
             if event == "exit":
                 result_repr = repr(data["result"])
                 markup = f"[{self.color_exit}]⬅️ {data['current_call_sig']}[/{self.color_exit}], returned: {result_repr}{timing_block}"
-            else: # exception
+            else:  # exception
                 exc_repr = repr(data["exception"])
                 markup = f"[{self.color_exception}]💥 {data['current_call_sig']}[/{self.color_exception}], raised: {exc_repr}{timing_block}"
 

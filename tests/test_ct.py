@@ -1,10 +1,14 @@
 # tests/test_ct.py
 
 """calltracer synchronous tests"""
+
 import logging
+
 import pytest
-from calltracer import CallTracer, stack, DFMT, no_self
+
+from calltracer import DFMT, CallTracer, no_self, stack
 from calltracer.calltracer import _readable_duration
+
 
 class TestCallTracer:
     """Tests for the CallTracer decorator factory."""
@@ -19,7 +23,9 @@ class TestCallTracer:
     def test_init_custom_logger_and_level(self):
         """Verify that custom arguments are handled."""
         custom_logger = logging.getLogger("custom_test_logger")
-        tracer = CallTracer(level=logging.CRITICAL, trace_chain=True, logger=custom_logger)
+        tracer = CallTracer(
+            level=logging.CRITICAL, trace_chain=True, logger=custom_logger
+        )
         assert tracer.level == logging.CRITICAL
         assert tracer.trace_chain is True
         assert tracer.logger == custom_logger
@@ -79,52 +85,57 @@ class TestCallTracer:
         """Verify that the trace_chain=True feature works correctly."""
         caplog.set_level(logging.INFO, logger="calltracer.calltracer")
         trace = CallTracer(level=logging.INFO, trace_chain=True)
- 
+
         @trace
         def mid_level(y):
             low_level(y + 1)
- 
+
         @trace
         def low_level(z):
             return z
- 
+
         @trace
         def high_level(x):
             mid_level(x * 2)
- 
+
         high_level(10)
- 
+
         assert len(caplog.records) == 6
- 
+
         mid_entry = caplog.records[1].message
         assert "mid_level" in mid_entry
         assert "<==" in mid_entry
         assert "high_level" in mid_entry
- 
+
         low_entry = caplog.records[2].message
         assert "low_level" in low_entry
         assert "mid_level" in low_entry
         assert "high_level" in low_entry
- 
+
         low_exit = caplog.records[3].message
         assert "low_level" in low_exit
         assert "returned: 21" in low_exit
-    
+
     def test_all_features_sync(self, caplog):
         """A comprehensive test for multiple features interacting."""
         test_logger = logging.getLogger("test_all_features_sync")
-        
+
         def even_only(func_name, n):
             return n % 2 == 0
 
         trace = CallTracer(
-            logger=test_logger, condition=even_only, timing="Mh", ide_support=True,
-            return_transform=lambda r: f"Result was {r}", max_return_len=15
+            logger=test_logger,
+            condition=even_only,
+            timing="Mh",
+            ide_support=True,
+            return_transform=lambda r: f"Result was {r}",
+            max_return_len=15,
         )
 
         @trace
         def recursive_func(n):
-            if n <= 0: return 0
+            if n <= 0:
+                return 0
             return n + recursive_func(n - 1)
 
         with caplog.at_level(logging.DEBUG, logger="test_all_features_sync"):
@@ -139,19 +150,20 @@ class TestCallTracer:
     def test_json_output_sync(self, caplog):
         """Test that output='json' produces valid JSON."""
         import json
+
         test_logger = logging.getLogger("test_json_output_sync")
-        trace = CallTracer(logger=test_logger, output='json')
+        trace = CallTracer(logger=test_logger, output="json")
 
         @trace
         def simple_func():
             return "OK"
-        
+
         with caplog.at_level(logging.DEBUG, logger="test_json_output_sync"):
             simple_func()
-        
+
         enter_record = json.loads(caplog.records[0].message)
         exit_record = json.loads(caplog.records[1].message)
-        
+
         assert enter_record["event"] == "enter"
         assert exit_record["event"] == "exit"
         assert exit_record["result"] == "OK"
@@ -159,20 +171,24 @@ class TestCallTracer:
     def test_wildcard_transform(self, caplog):
         """Test transform with a wildcard for the function name."""
         test_logger = logging.getLogger("test_wildcard_transform")
-        trace = CallTracer(logger=test_logger, transform={('*', 'password'): lambda p: '***'})
-        
+        trace = CallTracer(
+            logger=test_logger, transform={("*", "password"): lambda p: "***"}
+        )
+
         @trace
         def login(username, password):
             pass
-        
+
         with caplog.at_level(logging.DEBUG, logger="test_wildcard_transform"):
             login("admin", "secret123")
-            
+
         assert "password='***'" in caplog.text
         assert "secret123" not in caplog.text
 
+
 class TestReadableDuration:
     """Tests the _readable_duration helper function."""
+
     def test_formats(self):
         ns = 1234567
         assert _readable_duration(ns, DFMT.NANO) == "1234567 ns"
@@ -187,22 +203,25 @@ class TestReadableDuration:
         assert "hr" in _readable_duration(4_000_000_000_000, DFMT.SINGLE)
 
     def test_human_format(self):
-        duration = 3723_400_000_000 # 1hr, 2min, 3.4s
+        duration = 3723_400_000_000  # 1hr, 2min, 3.4s
         assert _readable_duration(duration, DFMT.HUMAN) == "1 hr, 2 min, 3.4 s"
         assert _readable_duration(123_400_000_000, DFMT.HUMAN) == "2 min, 3.4 s"
         assert _readable_duration(3_400_000_000, DFMT.HUMAN) == "3.4 s"
-        assert "ns" in _readable_duration(100, DFMT.HUMAN) # Falls back to SINGLE
+        assert "ns" in _readable_duration(100, DFMT.HUMAN)  # Falls back to SINGLE
         with pytest.raises(ValueError):
             _readable_duration(1, "unknown_fmt")
+
 
 # --- Helper functions for testing stack() ---
 def outer_func_for_stack_test(level=logging.DEBUG, limit=None, start=0):
     """outer_func_for_stack_test"""
     middle_func_for_stack_test(level, limit, start)
 
+
 def middle_func_for_stack_test(level, limit, start):
     """middle_func_for_stack_test"""
     inner_func_for_stack_test(level, limit, start)
+
 
 def inner_func_for_stack_test(level, limit, start):
     """testing stack() inside the inner function"""
