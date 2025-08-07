@@ -14,14 +14,19 @@ logging.basicConfig(
 )
 
 trace = CallTracer(level=logging.DEBUG)
+
 chtrace = CallTracer(level=logging.DEBUG, trace_chain=True, transform=no_self)
+
 tchtrace = CallTracer(
     level=logging.DEBUG, trace_chain=True, transform=no_self, timing="chm"
 )
+
 techtrace = CallTracer(
     level=logging.DEBUG, trace_chain=True, transform=no_self, timing="CHM"
 )
+
 idetrace = CallTracer(level=logging.DEBUG, trace_chain=True, ide_support=True)
+
 termtrace = CallTracer(
     level=logging.DEBUG, trace_chain=True, term_support=True, rel_path=False
 )
@@ -56,11 +61,7 @@ class SecondAdvancedCalculator:  # pylint: disable=too-few-public-methods
 
     @chtrace
     def factorial(self, n):
-        """Calculates factorial and demonstrates stack tracing."""
-        if n == 2:
-            logging.info("--- Dumping stack, because n == 2 ---")
-            # Call stack() with INFO level to make it stand out in the log
-            stack(level=logging.INFO)
+        """Calculates factorial"""
 
         if n < 0:
             raise ValueError("Factorial is not defined for negative numbers")
@@ -77,12 +78,7 @@ class ThirdAdvancedCalculator:  # pylint: disable=too-few-public-methods
 
     @tchtrace
     def factorial(self, n):
-        """Calculates factorial and demonstrates stack tracing."""
-        if n == 2:
-            logging.info("--- Dumping stack, because n == 2 ---")
-            # Call stack() with INFO level to make it stand out in the log
-            stack(level=logging.INFO)
-
+        """Calculates factorial"""
         if n < 0:
             raise ValueError("Factorial is not defined for negative numbers")
         if n == 0:
@@ -98,12 +94,7 @@ class FourthAdvancedCalculator:  # pylint: disable=too-few-public-methods
 
     @techtrace
     def factorial(self, n):
-        """Calculates factorial and demonstrates stack tracing."""
-        if n == 2:
-            logging.info("--- Dumping stack, because n == 2 ---")
-            # Call stack() with INFO level to make it stand out in the log
-            stack(level=logging.INFO)
-
+        """Calculates factorial"""
         if n < 0:
             raise ValueError("Factorial is not defined for negative numbers")
         if n == 0:
